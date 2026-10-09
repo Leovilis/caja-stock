@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function perfil() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
+    function activo() { return signedIn() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && perfil().activo == true; }
+    function admin() { return activo() && perfil().rol == 'admin'; }
+    function soloCambia(campos) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(campos); }
+
+    // ---- Inicialización: el primer usuario se crea como admin ----
+    match /config/setup {
+      allow read: if true;
+      allow create: if signedIn() && !exists(/databases/$(database)/documents/config/setup);
+    }
+    match /config/negocio {
+      allow read: if activo();
+      allow write: if admin();
+    }
+
+    match /usuarios/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || admin());
+      // bootstrap del primer admin (en la misma transacción que crea config/setup)
+      allow create: if (signedIn() && request.auth.uid == uid
+                        && !exists(/databases/$(database)/documents/config/setup)
+                        && existsAfter(/databases/$(database)/documents/config/setup)
+                        && request.resource.data.rol == 'admin')
+                    || admin();
+      allow update, delete: if admin() && request.auth.uid != uid;
+    }
+
+    // ---- Productos: el vendedor sólo puede modificar el stock (al vender) ----
+    match /productos/{id} {
+      allow read: if activo();
+      allow create, delete: if admin();
+      allow update: if admin() || (activo() && soloCambia(['stock', 'actualizado']));
+    }
+
+    match /contadores/{id} {
+      allow read, write: if activo();
+    }
+
+    // ---- Ventas: cualquiera vende; sólo el admin anula ----
+    match /ventas/{id} {
+      allow read: if activo();
+      allow create: if activo() && request.resource.data.usuarioId == request.auth.uid
+                    && request.resource.data.estado == 'completada';
+      allow update: if admin();
+      allow delete: if false;
+    }
+
+    match /movimientosStock/{id} {
+      allow read: if activo();
+      allow create: if activo();
+      allow update, delete: if false;
+    }
+
+    // ---- Caja ----
+    match /cajas/{id} {
+      allow read, create: if activo();
+      allow update: if activo() && resource.data.estado == 'abierta';
+      allow delete: if false;
+    }
+    match /movimientosCaja/{id} {
+      allow read, create: if activo();
+      allow update, delete: if admin();
+    }
+
+    // ---- Gastos: el vendedor puede cargar gastos pagados desde la caja ----
+    match /gastos/{id} {
+      allow read: if admin();
+      allow create: if activo();
+      allow update, delete: if admin();
+    }
+
+    match /compras/{id} {
+      allow read, write: if admin();
+    }
+    match /proveedores/{id} {
+      allow read, write: if admin();
+    }
+  }
+}

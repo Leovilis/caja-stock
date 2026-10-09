@@ -1,0 +1,7 @@
+codigo;nombre;categoria;marca;costo;precio;stock;stockmin;activo
+;Gaseosa cola 500ml;Gaseosas;;900;1400;24;6;si
+;Agua sin gas 500ml;Aguas;;450;800;24;6;si
+;Cerveza lata 473ml;Cervezas;;1200;1900;48;12;si
+;Energizante lata 250ml;Energizantes;;1100;1800;12;4;si
+;Papas fritas 80g;Snacks;;1000;1600;10;3;si
+;Alfajor triple;Golosinas;;600;1000;30;10;si
