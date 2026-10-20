@@ -2,14 +2,15 @@
 
 import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { Barcode, Minus, Plus, Printer, Search, ShoppingCart, Star, Trash2, Wallet, PlusCircle, Percent } from "lucide-react";
+import { FileCheck2, Barcode, Minus, Plus, Printer, Search, ShoppingCart, Star, Trash2, Wallet, PlusCircle, Percent } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
 import { abrirCaja, registrarVenta, type ItemCarrito } from "@/lib/db";
 import { money, round2, number } from "@/lib/format";
 import { imprimirTicket } from "@/lib/ticket";
-import { MEDIOS_PAGO, MedioPago, Pago, Producto, Venta } from "@/lib/types";
+import { MEDIOS_PAGO, MedioPago, Pago, Producto, Venta, facturacionConfigurada } from "@/lib/types";
+import { FacturarModal } from "@/components/FacturarModal";
 
 interface CarritoItem extends ItemCarrito {
   codigo: string;
@@ -36,6 +37,8 @@ export default function POSPage() {
   const [modalVarios, setModalVarios] = useState(false);
   const [modalDesc, setModalDesc] = useState(false);
   const [ultimaVenta, setUltimaVenta] = useState<Venta | null>(null);
+  const [ultimaFacturada, setUltimaFacturada] = useState(false);
+  const [facturando, setFacturando] = useState<Venta | null>(null);
   const [seleccion, setSeleccion] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -218,6 +221,7 @@ export default function POSPage() {
     try {
       const v = await registrarVenta(carrito, descuento, pagos, recibido, vuelto);
       setUltimaVenta(v);
+      setUltimaFacturada(false);
       setCobrando(false);
       vaciar();
       toast.success(`Venta #${v.numero} registrada${vuelto ? ` · Vuelto ${money(vuelto)}` : ""}`);
@@ -230,9 +234,9 @@ export default function POSPage() {
   if (!caja) return <AbrirCajaInline />;
 
   return (
-    <div className="grid h-[calc(100vh-2rem)] gap-3 lg:grid-cols-[1fr_420px]">
+    <div className="grid grid-cols-1 gap-3 lg:h-[calc(100vh-2rem)] lg:grid-cols-[minmax(0,1fr)_420px]">
       {/* Izquierda: búsqueda y productos */}
-      <section className="flex min-h-0 flex-col gap-3">
+      <section className="flex min-h-0 min-w-0 flex-col gap-3">
         <div className="card flex items-center gap-2 p-2">
           <Barcode className="ml-2 text-slate-400" />
           <input
@@ -242,10 +246,10 @@ export default function POSPage() {
             onChange={(e) => setBusqueda(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Escaneá el código o buscá por nombre…  (ej: 6*7790895000997)"
-            className="flex-1 bg-transparent px-2 py-3 text-lg outline-none"
+            className="min-w-0 flex-1 bg-transparent px-2 py-3 text-lg outline-none"
           />
           <button className="btn-ghost" onClick={() => setModalVarios(true)} title="F4">
-            <PlusCircle size={16} /> Varios
+            <PlusCircle size={16} /> <span className="hidden sm:inline">Varios</span>
           </button>
         </div>
 
@@ -260,7 +264,7 @@ export default function POSPage() {
           <span className="hidden md:inline">F2 buscar · F4 varios · F8 descuento · F12 / Enter vacío: cobrar</span>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="max-h-[45vh] min-h-0 flex-1 overflow-y-auto lg:max-h-none">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
             {resultados.map((p, i) => {
               const sinStock = p.stock <= 0;
@@ -295,7 +299,7 @@ export default function POSPage() {
       </section>
 
       {/* Derecha: ticket */}
-      <section className="card flex min-h-0 flex-col">
+      <section className="card flex min-h-[320px] flex-col lg:min-h-0">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="flex items-center gap-2 font-semibold">
             <ShoppingCart size={18} /> Ticket actual
@@ -314,9 +318,16 @@ export default function POSPage() {
               <Search />
               Escaneá un producto para empezar
               {ultimaVenta && (
-                <button className="btn-ghost btn-sm mt-4" onClick={() => imprimirTicket(ultimaVenta, config)}>
-                  <Printer size={14} /> Reimprimir ticket #{ultimaVenta.numero}
-                </button>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <button className="btn-ghost btn-sm" onClick={() => imprimirTicket(ultimaVenta, config)}>
+                    <Printer size={14} /> Reimprimir ticket #{ultimaVenta.numero}
+                  </button>
+                  {facturacionConfigurada(config) && !ultimaFacturada && (
+                    <button className="btn-primary btn-sm" onClick={() => setFacturando(ultimaVenta)}>
+                      <FileCheck2 size={14} /> Facturar #{ultimaVenta.numero}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           ) : (
@@ -376,6 +387,8 @@ export default function POSPage() {
       </section>
 
       <CobroModal open={cobrando} total={total} onClose={() => { setCobrando(false); foco(); }} onConfirm={confirmarVenta} />
+
+      <FacturarModal venta={facturando} onClose={() => { setFacturando(null); foco(); }} onListo={() => setUltimaFacturada(true)} />
 
       <VariosModal
         open={modalVarios}

@@ -18,6 +18,7 @@ Webapp de punto de venta para kiosco/drugstore: **ventas en tiempo real con lect
 | **Gastos** | Gastos operativos por categoría (alquiler, luz, sueldos, impuestos, comisiones MP…), CSV. | Admin |
 | **Reportes** | Ventas, costo, **ganancia bruta, margen, gastos y resultado neto**, evolución diaria, medios de pago, día de semana, franja horaria, por categoría, por vendedor, ranking de productos. | Admin |
 | **Inicio** | Ventas y ganancia de hoy vs ayer, resultado del mes, últimos 14 días, ventas por hora, más vendidos, alertas de stock. | Admin |
+| **Facturación electrónica ARCA** | Factura A, B y C y notas de crédito por web service directo (WSAA + WSFEv1), a pedido desde Ventas o la caja, con CAE, QR, IVA por alícuota y RG 5616. Ver [`docs/FACTURACION-ARCA.md`](docs/FACTURACION-ARCA.md). | Todos facturan; NC sólo admin |
 | **Usuarios / Configuración** | Roles admin/vendedor, alta sin cerrar tu sesión, desactivar, reset de contraseña. Datos del ticket, ancho de impresora, impresión automática, stock negativo, categorías. | Admin |
 
 ## Puesta en marcha
@@ -28,7 +29,7 @@ Webapp de punto de venta para kiosco/drugstore: **ventas en tiempo real con lect
 3. **Auth** → *Sign In / Providers* → Email:
    - Recomendado: desactivar **Confirm email** (así los vendedores que crees pueden entrar enseguida).
    - *URL Configuration* → **Site URL** = la URL donde publiques la app (para los emails de recuperar contraseña).
-4. **Variables:** `cp .env.local.example .env.local` y completá `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+4. **Variables:** `cp .env.local.example .env.local` y completá `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (las dos líneas que da el botón *Connect*)
    (*Project Settings → API*). La anon key es pública por diseño: la seguridad la dan las políticas RLS.
 5. **Correr:**
    ```bash
@@ -77,8 +78,11 @@ proveedores        nombre, contacto, telefono, email, cuit, dias_visita
 - Una sola caja abierta a la vez (un puesto de cobro), garantizado por un índice único.
 - Las listas se traen paginando de a 1000 filas (límite por defecto de Supabase), así los reportes de meses con muchos tickets salen completos.
 
+## Facturación electrónica
+
+Guía completa (certificado, punto de venta, variables del servidor y pruebas): **[docs/FACTURACION-ARCA.md](docs/FACTURACION-ARCA.md)**.
+
 ## Ideas para siguientes etapas
-- Facturación electrónica ARCA (el ticket actual dice "no válido como factura").
 - Cuenta corriente de clientes (fiado).
 - Integración con la API de Mercado Pago Point/QR.
 - Varias cajas simultáneas.

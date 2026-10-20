@@ -185,6 +185,78 @@ create table if not exists gastos (
 create index if not exists gastos_fecha_idx on gastos (fecha desc);
 
 -- ---------------------------------------------------------------------
+-- FACTURACIÓN ELECTRÓNICA ARCA (agregado v1.1)
+-- ---------------------------------------------------------------------
+-- Alícuota de IVA de cada artículo (los precios son finales, IVA incluido)
+alter table productos   add column if not exists alicuota_iva numeric(5,2) not null default 21;
+alter table venta_items add column if not exists alicuota_iva numeric(5,2) not null default 21;
+do $$ begin
+  alter table productos add constraint productos_alicuota_ck check (alicuota_iva in (0, 2.5, 5, 10.5, 21, 27));
+exception when duplicate_object then null; end $$;
+
+-- Datos fiscales del emisor (no secretos; el certificado va en variables de entorno del servidor)
+alter table config add column if not exists fiscal_condicion text not null default 'monotributo';
+alter table config add column if not exists fiscal_cuit text not null default '';
+alter table config add column if not exists fiscal_razon_social text not null default '';
+alter table config add column if not exists fiscal_domicilio text not null default '';
+alter table config add column if not exists fiscal_iibb text not null default '';
+alter table config add column if not exists fiscal_inicio_actividades date;
+alter table config add column if not exists fiscal_punto_venta int not null default 1;
+alter table config add column if not exists fiscal_ambiente text not null default 'homologacion';
+alter table config add column if not exists alicuota_varios numeric(5,2) not null default 21;
+do $$ begin
+  alter table config add constraint config_fiscal_ck check (fiscal_condicion in ('monotributo', 'responsable_inscripto')
+    and fiscal_ambiente in ('homologacion', 'produccion'));
+exception when duplicate_object then null; end $$;
+
+-- Marca de "facturación en curso" para que dos pedidos simultáneos no facturen la misma venta
+alter table ventas add column if not exists facturando timestamptz;
+
+-- Comprobantes autorizados por ARCA (facturas y notas de crédito)
+create table if not exists comprobantes (
+  id                  uuid primary key default gen_random_uuid(),
+  venta_id            uuid not null references ventas(id),
+  clase               text not null check (clase in ('factura', 'nota_credito')),
+  letra               text not null check (letra in ('A', 'B', 'C')),
+  tipo                int  not null,            -- código ARCA: 1/6/11 factura, 3/8/13 nota de crédito
+  punto_venta         int  not null,
+  numero              bigint not null,
+  fecha               date not null,
+  cae                 text not null,
+  cae_vto             date not null,
+  doc_tipo            int  not null,            -- 80 CUIT, 86 CUIL, 96 DNI, 99 sin identificar
+  doc_nro             bigint not null default 0,
+  receptor_nombre     text not null default '',
+  receptor_domicilio  text not null default '',
+  receptor_condicion  int  not null,            -- CondicionIVAReceptorId (RG 5616)
+  imp_total           numeric(14,2) not null,
+  imp_neto            numeric(14,2) not null,
+  imp_iva             numeric(14,2) not null,
+  iva                 jsonb not null default '[]',   -- [{alicuota, base, importe}]
+  asociado_id         uuid references comprobantes(id),
+  ambiente            text not null,
+  emisor_cuit         text not null,
+  emitido_por         text not null,
+  observaciones       text,
+  creado              timestamptz not null default now(),
+  unique (ambiente, emisor_cuit, tipo, punto_venta, numero)
+);
+create index if not exists comprobantes_venta_idx on comprobantes (venta_id);
+-- una sola factura y una sola nota de crédito por venta
+create unique index if not exists comprobantes_una_factura on comprobantes (venta_id, clase);
+
+-- Caché del ticket de acceso de WSAA (vale ~12 h). Sólo lo usa el servidor (sin políticas = invisible para el navegador)
+create table if not exists arca_ta (
+  servicio  text not null,
+  ambiente  text not null,
+  cuit      text not null,
+  token     text not null,
+  sign      text not null,
+  expira    timestamptz not null,
+  primary key (servicio, ambiente, cuit)
+);
+
+-- ---------------------------------------------------------------------
 -- HELPERS DE PERMISOS
 -- ---------------------------------------------------------------------
 create or replace function es_activo() returns boolean
@@ -312,17 +384,17 @@ begin
     v_cant := (it->>'cantidad')::numeric;
     if nullif(it->>'producto_id', '') is not null then
       select * into p from productos where id = (it->>'producto_id')::uuid;
-      insert into venta_items (venta_id, producto_id, nombre, codigo, categoria, cantidad, precio, costo, subtotal)
-      values (v_id, p.id, p.nombre, p.codigo, p.categoria, v_cant, p.precio, p.costo, round(v_cant * p.precio, 2));
+      insert into venta_items (venta_id, producto_id, nombre, codigo, categoria, cantidad, precio, costo, subtotal, alicuota_iva)
+      values (v_id, p.id, p.nombre, p.codigo, p.categoria, v_cant, p.precio, p.costo, round(v_cant * p.precio, 2), p.alicuota_iva);
       v_costo_total := v_costo_total + v_cant * p.costo;
 
       update productos set stock = stock - v_cant, actualizado = now() where id = p.id returning stock into v_nuevo;
       insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, ref, usuario_nombre)
       values (p.id, p.nombre, 'venta', -v_cant, v_nuevo + v_cant, v_nuevo, 'Venta #' || v_num, u.nombre);
     else
-      insert into venta_items (venta_id, producto_id, nombre, categoria, cantidad, precio, costo, subtotal)
+      insert into venta_items (venta_id, producto_id, nombre, categoria, cantidad, precio, costo, subtotal, alicuota_iva)
       values (v_id, null, coalesce(nullif(it->>'nombre', ''), 'Varios'), 'Varios', v_cant, (it->>'precio')::numeric, 0,
-              round(v_cant * (it->>'precio')::numeric, 2));
+              round(v_cant * (it->>'precio')::numeric, 2), cfg.alicuota_varios);
     end if;
   end loop;
 
@@ -341,6 +413,10 @@ begin
   select * into v from ventas where id = p_venta for update;
   if not found then raise exception 'La venta no existe'; end if;
   if v.estado = 'anulada' then raise exception 'La venta ya estaba anulada'; end if;
+  if exists (select 1 from comprobantes where venta_id = p_venta and clase = 'factura')
+     and not exists (select 1 from comprobantes where venta_id = p_venta and clase = 'nota_credito') then
+    raise exception 'La venta está facturada: primero hay que emitir la nota de crédito';
+  end if;
 
   update ventas set estado = 'anulada', motivo_anulacion = p_motivo, anulada_por = u.nombre, fecha_anulacion = now() where id = p_venta;
 
@@ -361,11 +437,12 @@ language plpgsql security definer set search_path = public as $$
 declare u perfiles; v_id uuid; v_stock numeric := coalesce((p->>'stock')::numeric, 0);
 begin
   u := _exigir_admin();
-  insert into productos (nombre, codigo, categoria, marca, costo, precio, stock, stock_min, proveedor_id, activo, favorito)
+  insert into productos (nombre, codigo, categoria, marca, costo, precio, stock, stock_min, proveedor_id, activo, favorito, alicuota_iva)
   values (trim(p->>'nombre'), coalesce(trim(p->>'codigo'), ''), coalesce(nullif(p->>'categoria', ''), 'Varios'), coalesce(p->>'marca', ''),
           coalesce((p->>'costo')::numeric, 0), coalesce((p->>'precio')::numeric, 0), v_stock,
           coalesce((p->>'stock_min')::numeric, 0), nullif(p->>'proveedor_id', '')::uuid,
-          coalesce((p->>'activo')::boolean, true), coalesce((p->>'favorito')::boolean, false))
+          coalesce((p->>'activo')::boolean, true), coalesce((p->>'favorito')::boolean, false),
+          coalesce((p->>'alicuota_iva')::numeric, 21))
   returning id into v_id;
   if v_stock <> 0 then
     insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario_nombre)
@@ -424,17 +501,19 @@ begin
       update productos set nombre = f->>'nombre', categoria = coalesce(nullif(f->>'categoria', ''), categoria),
         marca = coalesce(f->>'marca', marca), costo = coalesce((f->>'costo')::numeric, costo),
         precio = coalesce((f->>'precio')::numeric, precio), stock_min = coalesce((f->>'stock_min')::numeric, stock_min),
-        activo = coalesce((f->>'activo')::boolean, activo), actualizado = now()
+        activo = coalesce((f->>'activo')::boolean, activo),
+        alicuota_iva = coalesce((f->>'alicuota_iva')::numeric, alicuota_iva), actualizado = now()
       where codigo = f->>'codigo' returning id into v_id;
     end if;
     if v_id is not null then
       actualizados := actualizados + 1;
     else
       v_stock := coalesce((f->>'stock')::numeric, 0);
-      insert into productos (nombre, codigo, categoria, marca, costo, precio, stock, stock_min, activo)
+      insert into productos (nombre, codigo, categoria, marca, costo, precio, stock, stock_min, activo, alicuota_iva)
       values (f->>'nombre', coalesce(f->>'codigo', ''), coalesce(nullif(f->>'categoria', ''), 'Varios'), coalesce(f->>'marca', ''),
               coalesce((f->>'costo')::numeric, 0), coalesce((f->>'precio')::numeric, 0), v_stock,
-              coalesce((f->>'stock_min')::numeric, 0), coalesce((f->>'activo')::boolean, true))
+              coalesce((f->>'stock_min')::numeric, 0), coalesce((f->>'activo')::boolean, true),
+              coalesce((f->>'alicuota_iva')::numeric, 21))
       returning id into v_id;
       if v_stock <> 0 then
         insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario_nombre)
@@ -600,6 +679,8 @@ alter table movimientos_caja  enable row level security;
 alter table movimientos_stock enable row level security;
 alter table compras           enable row level security;
 alter table gastos            enable row level security;
+alter table comprobantes      enable row level security;
+alter table arca_ta           enable row level security;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public' loop
@@ -631,6 +712,8 @@ create policy movcaja_sel on movimientos_caja for select using (es_activo());
 create policy movstock_sel on movimientos_stock for select using (es_admin());
 create policy compras_sel on compras for select using (es_admin());
 create policy gastos_sel on gastos for select using (es_admin());
+create policy comprobantes_sel on comprobantes for select using (exists (select 1 from ventas v where v.id = venta_id));
+-- arca_ta: sin políticas a propósito (sólo el servidor con la clave secreta)
 create policy gastos_del on gastos for delete using (es_admin() and caja_id is null);
 
 -- Evita que un UPDATE directo desde el cliente toque el stock (sólo funciones con movimiento)
@@ -659,7 +742,7 @@ grant execute on function sistema_inicializado to anon, authenticated;
 do $$
 declare t text;
 begin
-  foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras','movimientos_stock','proveedores'] loop
+  foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras','movimientos_stock','proveedores','comprobantes'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
     end if;

@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { Printer, Save, X } from "lucide-react";
+import { CheckCircle2, PlugZap, Printer, Save, X, XCircle } from "lucide-react";
+import { estadoArca } from "@/lib/arca/cliente";
 import { useApp } from "@/context/AppContext";
 import { guardarConfig } from "@/lib/db";
 import { imprimirTicket } from "@/lib/ticket";
 import type { Config, Venta } from "@/lib/types";
-import { Field, PageHeader } from "@/components/ui";
+import { Field, NumInput, PageHeader } from "@/components/ui";
+import { ALICUOTAS, cuitValido } from "@/lib/arca/calculo";
 
 function ListaEditable({ titulo, items, onChange }: { titulo: string; items: string[]; onChange: (v: string[]) => void }) {
   const [nuevo, setNuevo] = useState("");
@@ -44,6 +46,8 @@ export default function ConfigPage() {
   const { config } = useApp();
   const [f, setF] = useState<Config>(config);
   const [guardando, setGuardando] = useState(false);
+  const [probando, setProbando] = useState(false);
+  const [diag, setDiag] = useState<{ paso: string; ok: boolean; detalle: string }[] | null>(null);
   useEffect(() => setF(config), [config]);
 
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setF((x) => ({ ...x, [k]: v }));
@@ -136,6 +140,98 @@ export default function ConfigPage() {
           <p className="text-xs text-slate-500 sm:col-span-2">
             Tip: en Chrome podés imprimir sin el cuadro de diálogo iniciando el navegador con <code>--kiosk-printing</code> y dejando la térmica como impresora predeterminada.
           </p>
+        </div>
+
+        <div className="card grid gap-3 p-5 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <h3 className="font-semibold">Facturación electrónica (ARCA)</h3>
+            <p className="text-xs text-slate-500">
+              Las facturas se emiten a pedido desde <b>Ventas</b> o al terminar una venta. El certificado digital se configura en el servidor (ver manual).
+            </p>
+          </div>
+          <Field label="Condición frente al IVA">
+            <select className="input" value={f.fiscal_condicion} onChange={(e) => set("fiscal_condicion", e.target.value as Config["fiscal_condicion"])}>
+              <option value="monotributo">Monotributo (Factura C)</option>
+              <option value="responsable_inscripto">Responsable Inscripto (Factura A y B)</option>
+            </select>
+          </Field>
+          <Field label="CUIT del emisor">
+            <input className={`input ${f.fiscal_cuit && !cuitValido(f.fiscal_cuit) ? "border-rose-400" : ""}`} value={f.fiscal_cuit} onChange={(e) => set("fiscal_cuit", e.target.value.replace(/[^\d-]/g, ""))} placeholder="20-12345678-9" />
+          </Field>
+          <Field label="Razón social (como figura en ARCA)">
+            <input className="input" value={f.fiscal_razon_social} onChange={(e) => set("fiscal_razon_social", e.target.value)} />
+          </Field>
+          <Field label="Domicilio comercial">
+            <input className="input" value={f.fiscal_domicilio} onChange={(e) => set("fiscal_domicilio", e.target.value)} />
+          </Field>
+          <Field label="Ingresos Brutos">
+            <input className="input" value={f.fiscal_iibb} onChange={(e) => set("fiscal_iibb", e.target.value)} placeholder="N° o Exento / Convenio multilateral" />
+          </Field>
+          <Field label="Inicio de actividades">
+            <input type="date" className="input" value={f.fiscal_inicio_actividades ?? ""} onChange={(e) => set("fiscal_inicio_actividades", e.target.value || null)} />
+          </Field>
+          <Field label="Punto de venta (web service)">
+            <NumInput value={f.fiscal_punto_venta} onChange={(n) => set("fiscal_punto_venta", Math.max(1, Math.round(n)))} />
+          </Field>
+          <Field label="Ambiente">
+            <select
+              className="input"
+              value={f.fiscal_ambiente}
+              onChange={(e) => {
+                const v = e.target.value as Config["fiscal_ambiente"];
+                if (v === "produccion" && !confirm("En PRODUCCIÓN las facturas tienen validez fiscal y no se pueden borrar. ¿Confirmás?")) return;
+                set("fiscal_ambiente", v);
+              }}
+            >
+              <option value="homologacion">Homologación (pruebas, sin validez fiscal)</option>
+              <option value="produccion">Producción (facturas reales)</option>
+            </select>
+          </Field>
+          {f.fiscal_condicion === "responsable_inscripto" && (
+            <Field label="IVA de los ítems «Varios»">
+              <select className="input" value={f.alicuota_varios} onChange={(e) => set("alicuota_varios", Number(e.target.value))}>
+                {ALICUOTAS.map((a) => (
+                  <option key={a} value={a}>
+                    {String(a).replace(".", ",")} %
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <div className="sm:col-span-2">
+            <button
+              className="btn-ghost"
+              disabled={probando}
+              onClick={async () => {
+                setProbando(true);
+                setDiag(null);
+                try {
+                  await guardarConfig(f);
+                  const r = await estadoArca();
+                  setDiag(r.pasos);
+                  if (r.ok) toast.success("Conexión con ARCA OK");
+                } catch (e) {
+                  toast.error((e as Error).message);
+                } finally {
+                  setProbando(false);
+                }
+              }}
+            >
+              <PlugZap size={16} /> {probando ? "Probando…" : "Guardar y probar conexión con ARCA"}
+            </button>
+            {diag && (
+              <ul className="mt-3 space-y-1.5 text-sm">
+                {diag.map((d) => (
+                  <li key={d.paso} className="flex gap-2">
+                    {d.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" /> : <XCircle size={16} className="mt-0.5 shrink-0 text-rose-600" />}
+                    <span>
+                      <b>{d.paso}:</b> <span className={d.ok ? "text-slate-600" : "text-rose-700"}>{d.detalle}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">

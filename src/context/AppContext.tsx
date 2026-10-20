@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import { supabase, errorConfig } from "@/lib/supabase";
 import type { Caja, Config, Perfil } from "@/lib/types";
 import { CONFIG_DEFAULT } from "@/lib/types";
 
@@ -100,6 +100,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut();
     },
   };
+  if (errorConfig) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="card max-w-md p-6">
+          <h2 className="text-lg font-semibold text-rose-600">Falta configurar Supabase</h2>
+          <p className="mt-2 text-sm">{errorConfig}</p>
+          <p className="mt-3 text-xs text-slate-500">
+            Editá el archivo <code>.env.local</code> en la raíz del proyecto y reiniciá <code>npm run dev</code> (Next sólo lee ese archivo al arrancar).
+          </p>
+        </div>
+      </div>
+    );
+  }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

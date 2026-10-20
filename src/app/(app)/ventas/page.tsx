@@ -2,15 +2,18 @@
 
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { Ban, Download, Eye, Printer } from "lucide-react";
+import { Ban, Download, Eye, FileCheck2, Printer } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
 import { anularVenta } from "@/lib/db";
 import { money, number, fechaHora, isoDate, parseIsoDate, finDia } from "@/lib/format";
 import { descargarCSV } from "@/lib/csv";
-import { imprimirTicket } from "@/lib/ticket";
-import type { Venta } from "@/lib/types";
+import { imprimirComprobante, imprimirTicket } from "@/lib/ticket";
+import { anularConNotaCredito } from "@/lib/arca/cliente";
+import { nombreCbte, numeroCbte } from "@/lib/arca/calculo";
+import { FacturarModal } from "@/components/FacturarModal";
+import type { Comprobante, Venta } from "@/lib/types";
 import { MEDIOS_PAGO, medioLabel } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
 
@@ -23,6 +26,8 @@ export default function VentasPage() {
   const [buscar, setBuscar] = useState("");
   const [detalle, setDetalle] = useState<Venta | null>(null);
   const [motivo, setMotivo] = useState("");
+  const [facturando, setFacturando] = useState<Venta | null>(null);
+  const [anulando, setAnulando] = useState(false);
 
   // Los vendedores sólo ven el día de hoy
   const d = esAdmin ? desde : hoy;
@@ -31,11 +36,11 @@ export default function VentasPage() {
     () =>
       supabase
         .from("ventas")
-        .select("*, venta_items(*)")
+        .select("*, venta_items(*), comprobantes(*)")
         .gte("fecha", parseIsoDate(d).toISOString())
         .lte("fecha", finDia(parseIsoDate(h)).toISOString())
         .order("fecha", { ascending: false }),
-    ["ventas"],
+    ["ventas", "comprobantes"],
     `${d}-${h}`
   );
 
@@ -50,13 +55,26 @@ export default function VentasPage() {
   async function anular() {
     if (!detalle) return;
     if (!motivo.trim()) return toast.error("Indicá el motivo");
+    const fac = facturaDe(detalle);
+    if (fac && !confirm(`La venta tiene ${nombreCbte("factura", fac.letra)} ${numeroCbte(fac.punto_venta, fac.numero)}. Se va a emitir una Nota de Crédito en ARCA y después se anula la venta. ¿Continuar?`)) return;
+    setAnulando(true);
     try {
-      await anularVenta(detalle.id, motivo.trim());
+      if (fac) {
+        const r = await anularConNotaCredito(detalle.id, motivo.trim());
+        if (r.nota) {
+          toast.success(`Nota de crédito ${r.nota.letra} N° ${r.nota.numero} emitida · CAE ${r.nota.cae}`, { duration: 6000 });
+          await imprimirComprobante(detalle, r.nota, config, fac);
+        }
+      } else {
+        await anularVenta(detalle.id, motivo.trim());
+      }
       toast.success(`Venta #${detalle.numero} anulada. Stock devuelto.`);
       setDetalle(null);
       setMotivo("");
     } catch (e) {
-      toast.error((e as Error).message);
+      toast.error((e as Error).message, { duration: 10000 });
+    } finally {
+      setAnulando(false);
     }
   }
 
@@ -136,7 +154,14 @@ export default function VentasPage() {
             <tbody>
               {lista.map((v) => (
                 <tr key={v.id} className={v.estado === "anulada" ? "text-slate-400 line-through" : ""}>
-                  <td className="font-mono text-xs">#{v.numero}</td>
+                  <td className="font-mono text-xs">
+                    #{v.numero}
+                    {facturaDe(v) && (
+                      <span className="ml-1 rounded bg-emerald-100 px-1 font-sans text-[10px] font-semibold text-emerald-700 no-underline" title="Facturada">
+                        F{facturaDe(v)!.letra}
+                      </span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap text-xs">{fechaHora(v.fecha)}</td>
                   <td className="max-w-xs truncate text-sm">{v.venta_items.map((i) => `${number(i.cantidad)}× ${i.nombre}`).join(", ")}</td>
                   <td className="text-xs">{v.pagos.map((p) => medioLabel(p.medio)).join(" + ")}</td>
@@ -205,23 +230,63 @@ export default function VentasPage() {
             </table>
             <div className="flex gap-2">
               <button className="btn-ghost flex-1" onClick={() => imprimirTicket(detalle, config)}>
-                <Printer size={16} /> Reimprimir
+                <Printer size={16} /> Reimprimir ticket
               </button>
               <Badge tone={detalle.estado === "anulada" ? "red" : "green"}>{detalle.estado}</Badge>
             </div>
+            {(detalle.comprobantes ?? []).length > 0 && (
+              <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                {[...(detalle.comprobantes ?? [])]
+                  .sort((a, b) => (a.clase === "factura" ? -1 : 1) - (b.clase === "factura" ? -1 : 1))
+                  .map((c) => (
+                    <div key={c.id} className="flex items-center justify-between gap-2 text-sm">
+                      <div>
+                        <div className="font-semibold">
+                          {nombreCbte(c.clase, c.letra)} {numeroCbte(c.punto_venta, c.numero)}
+                          {c.ambiente === "homologacion" && <span className="ml-1 text-xs font-normal text-amber-700">(prueba)</span>}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          CAE {c.cae} · {c.doc_tipo === 99 ? "Consumidor final" : `${c.receptor_nombre || "Doc."} ${c.doc_nro}`}
+                        </div>
+                      </div>
+                      <button
+                        className="btn-ghost btn-sm"
+                        onClick={() =>
+                          imprimirComprobante(detalle, c, config, c.asociado_id ? (detalle.comprobantes ?? []).find((x) => x.id === c.asociado_id) : null)
+                        }
+                      >
+                        <Printer size={14} /> Imprimir
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            )}
+            {detalle.estado === "completada" && !facturaDe(detalle) && (
+              <button className="btn-primary w-full" onClick={() => setFacturando(detalle)}>
+                <FileCheck2 size={16} /> Facturar (ARCA)
+              </button>
+            )}
             {esAdmin && detalle.estado === "completada" && (
               <div className="rounded-lg border border-rose-200 p-3">
-                <Field label="Anular venta (devuelve el stock)">
+                <Field label={facturaDe(detalle) ? "Anular venta (emite nota de crédito y devuelve el stock)" : "Anular venta (devuelve el stock)"}>
                   <input className="input" placeholder="Motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
                 </Field>
-                <button className="btn-danger mt-2 w-full" onClick={anular}>
-                  <Ban size={16} /> Anular
+                <button className="btn-danger mt-2 w-full" onClick={anular} disabled={anulando}>
+                  <Ban size={16} /> {anulando ? "Procesando…" : "Anular"}
                 </button>
               </div>
             )}
           </div>
         )}
       </Modal>
+
+      <FacturarModal
+        venta={facturando}
+        onClose={() => setFacturando(null)}
+        onListo={(c) => setDetalle((d) => (d && d.id === c.venta_id ? { ...d, comprobantes: [...(d.comprobantes ?? []), c] } : d))}
+      />
     </div>
   );
 }
+
+const facturaDe = (v: Venta): Comprobante | undefined => (v.comprobantes ?? []).find((c) => c.clase === "factura");

@@ -1,4 +1,6 @@
-import type { Config, Venta, Caja } from "./types";
+import QRCode from "qrcode";
+import type { Config, Venta, Caja, Comprobante } from "./types";
+import { condicionLabel, nombreCbte, numeroCbte, TIPOS_DOC, urlQR } from "./arca/calculo";
 import { medioLabel } from "./types";
 import { money, fechaHora, number } from "./format";
 
@@ -100,6 +102,87 @@ export function imprimirCierreCaja(c: Caja, cfg: Config) {
       <tr class="b"><td>Diferencia</td><td class="r">${money(c.diferencia)}</td></tr>
     </table>
     ${c.observaciones ? `<hr/><div>Obs: ${escapeHtml(c.observaciones)}</div>` : ""}`,
+    cfg.ancho_ticket
+  );
+}
+
+/** Factura / nota de crédito electrónica con CAE y QR (RG 4892) */
+export async function imprimirComprobante(v: Venta, c: Comprobante, cfg: Config, asociado?: Comprobante | null) {
+  const qr = await QRCode.toDataURL(
+    urlQR({
+      fecha: c.fecha,
+      cuit: c.emisor_cuit,
+      ptoVta: c.punto_venta,
+      tipoCmp: c.tipo,
+      nroCmp: Number(c.numero),
+      importe: Number(c.imp_total),
+      tipoDocRec: c.doc_tipo,
+      nroDocRec: Number(c.doc_nro),
+      cae: c.cae,
+    }),
+    { margin: 0, width: 260, errorCorrectionLevel: "M" }
+  );
+  const fechaAr = (iso: string) => iso.split("-").reverse().join("/");
+  const esA = c.letra === "A";
+  const docLabel = TIPOS_DOC.find((t) => t.id === c.doc_tipo)?.label.split(" ")[0] ?? "Doc";
+  const cuitFmt = (x: string) => x.replace(/^(\d{2})(\d{8})(\d)$/, "$1-$2-$3");
+
+  // En la A los precios se muestran sin IVA
+  const filas = v.venta_items
+    .map((i) => {
+      const div = esA ? 1 + Number(i.alicuota_iva ?? 21) / 100 : 1;
+      const pu = Number(i.precio) / div;
+      const st = Number(i.subtotal) / div;
+      return `<tr><td colspan="2">${escapeHtml(i.nombre)}${esA ? ` <small>(IVA ${String(i.alicuota_iva ?? 21).replace(".", ",")}%)</small>` : ""}</td></tr>
+      <tr><td>&nbsp;${number(i.cantidad)} x ${money(pu)}</td><td class="r">${money(st)}</td></tr>`;
+    })
+    .join("");
+  const sumaItems = v.venta_items.reduce((a, i) => a + Number(i.subtotal) / (esA ? 1 + Number(i.alicuota_iva ?? 21) / 100 : 1), 0);
+  const descuento = Math.round(((esA ? sumaItems - Number(c.imp_neto) : Number(v.subtotal) - Number(c.imp_total)) || 0) * 100) / 100;
+
+  const totales = esA
+    ? `${descuento > 0.009 ? `<tr><td>Descuento</td><td class="r">-${money(descuento)}</td></tr>` : ""}
+       <tr><td>Neto gravado</td><td class="r">${money(c.imp_neto)}</td></tr>
+       ${c.iva.map((a) => `<tr><td>IVA ${String(a.alicuota).replace(".", ",")}%</td><td class="r">${money(a.importe)}</td></tr>`).join("")}
+       <tr class="b big"><td>TOTAL</td><td class="r">${money(c.imp_total)}</td></tr>`
+    : `${descuento > 0.009 ? `<tr><td>Subtotal</td><td class="r">${money(v.subtotal)}</td></tr><tr><td>Descuento</td><td class="r">-${money(descuento)}</td></tr>` : ""}
+       <tr class="b big"><td>TOTAL</td><td class="r">${money(c.imp_total)}</td></tr>`;
+  const transparencia =
+    c.letra === "B"
+      ? `<hr/><div style="font-size:.85em">Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</div>
+         <table style="font-size:.85em"><tr><td>IVA contenido</td><td class="r">${money(c.imp_iva)}</td></tr></table>`
+      : "";
+
+  imprimirHTML(
+    `<div class="c b big">${escapeHtml(cfg.fiscal_razon_social || cfg.nombre)}</div>
+    ${cfg.fiscal_razon_social && cfg.nombre !== cfg.fiscal_razon_social ? `<div class="c">${escapeHtml(cfg.nombre)}</div>` : ""}
+    <div class="c">${escapeHtml(cfg.fiscal_domicilio || cfg.direccion)}</div>
+    <div class="c">CUIT: ${cuitFmt(c.emisor_cuit)}</div>
+    ${cfg.fiscal_iibb ? `<div class="c">IIBB: ${escapeHtml(cfg.fiscal_iibb)}</div>` : ""}
+    ${cfg.fiscal_inicio_actividades ? `<div class="c">Inicio de actividades: ${fechaAr(cfg.fiscal_inicio_actividades)}</div>` : ""}
+    <div class="c">${cfg.fiscal_condicion === "monotributo" ? "Responsable Monotributo" : "IVA Responsable Inscripto"}</div>
+    <hr/>
+    <div class="c b big">${nombreCbte(c.clase, c.letra)}</div>
+    <div class="c">Cód. ${String(c.tipo).padStart(3, "0")}</div>
+    <div class="c b">N° ${numeroCbte(c.punto_venta, Number(c.numero))}</div>
+    <div class="c">Fecha: ${fechaAr(c.fecha)}</div>
+    ${c.ambiente === "homologacion" ? '<div class="c b">*** PRUEBA (HOMOLOGACIÓN) — SIN VALIDEZ FISCAL ***</div>' : ""}
+    <hr/>
+    <div>${c.doc_tipo === 99 ? "A CONSUMIDOR FINAL" : `${escapeHtml(c.receptor_nombre || "Cliente")}`}</div>
+    ${c.doc_tipo !== 99 ? `<div>${docLabel}: ${c.doc_tipo === 80 || c.doc_tipo === 86 ? cuitFmt(String(c.doc_nro)) : c.doc_nro}</div>` : ""}
+    <div>Cond. IVA: ${condicionLabel(c.receptor_condicion)}</div>
+    ${c.receptor_domicilio ? `<div>Domicilio: ${escapeHtml(c.receptor_domicilio)}</div>` : ""}
+    ${asociado ? `<div>Comprobante asociado: ${nombreCbte(asociado.clase, asociado.letra)} ${numeroCbte(asociado.punto_venta, Number(asociado.numero))}</div>` : ""}
+    <hr/>
+    <table>${filas}</table>
+    <hr/>
+    <table>${totales}</table>
+    ${transparencia}
+    <hr/>
+    <table><tr><td>CAE N°</td><td class="r b">${c.cae}</td></tr><tr><td>Vto. CAE</td><td class="r">${fechaAr(c.cae_vto)}</td></tr></table>
+    <div class="c" style="margin-top:6px"><img src="${qr}" style="width:32mm;height:32mm"/></div>
+    <div class="c" style="font-size:.85em">Comprobante autorizado por ARCA</div>
+    <div class="c" style="font-size:.85em">Ticket interno N° ${v.numero}</div>`,
     cfg.ancho_ticket
   );
 }

@@ -23,6 +23,7 @@ export interface Producto {
   proveedor_id: string | null;
   activo: boolean;
   favorito: boolean;
+  alicuota_iva: number;
   creado?: string;
   actualizado?: string;
 }
@@ -50,6 +51,7 @@ export interface VentaItem {
   precio: number;
   costo: number;
   subtotal: number;
+  alicuota_iva?: number;
 }
 
 export interface Pago {
@@ -75,6 +77,33 @@ export interface Venta {
   motivo_anulacion?: string | null;
   anulada_por?: string | null;
   venta_items: VentaItem[];
+  comprobantes?: Comprobante[];
+}
+
+export interface Comprobante {
+  id: string;
+  venta_id: string;
+  clase: "factura" | "nota_credito";
+  letra: "A" | "B" | "C";
+  tipo: number;
+  punto_venta: number;
+  numero: number;
+  fecha: string;
+  cae: string;
+  cae_vto: string;
+  doc_tipo: number;
+  doc_nro: number;
+  receptor_nombre: string;
+  receptor_domicilio: string;
+  receptor_condicion: number;
+  imp_total: number;
+  imp_neto: number;
+  imp_iva: number;
+  iva: { alicuota: number; id: number; base: number; importe: number }[];
+  asociado_id: string | null;
+  ambiente: "homologacion" | "produccion";
+  emisor_cuit: string;
+  emitido_por: string;
 }
 
 export interface Caja {
@@ -177,6 +206,15 @@ export interface Config {
   imprimir_automatico: boolean;
   categorias_producto: string[];
   categorias_gasto: string[];
+  fiscal_condicion: "monotributo" | "responsable_inscripto";
+  fiscal_cuit: string;
+  fiscal_razon_social: string;
+  fiscal_domicilio: string;
+  fiscal_iibb: string;
+  fiscal_inicio_actividades: string | null;
+  fiscal_punto_venta: number;
+  fiscal_ambiente: "homologacion" | "produccion";
+  alicuota_varios: number;
 }
 
 export const CONFIG_DEFAULT: Config = {
@@ -190,4 +228,16 @@ export const CONFIG_DEFAULT: Config = {
   imprimir_automatico: false,
   categorias_producto: ["Varios"],
   categorias_gasto: ["Otros"],
+  fiscal_condicion: "monotributo",
+  fiscal_cuit: "",
+  fiscal_razon_social: "",
+  fiscal_domicilio: "",
+  fiscal_iibb: "",
+  fiscal_inicio_actividades: null,
+  fiscal_punto_venta: 1,
+  fiscal_ambiente: "homologacion",
+  alicuota_varios: 21,
 };
+
+/** ¿Están cargados los datos mínimos para facturar? */
+export const facturacionConfigurada = (c: Config) => !!(c.fiscal_cuit && c.fiscal_razon_social && c.fiscal_punto_venta > 0);

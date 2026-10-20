@@ -12,6 +12,7 @@ import { descargarCSV, parseCSV, parseNumero } from "@/lib/csv";
 import type { Producto, Proveedor } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, NumInput, PageHeader } from "@/components/ui";
 import { AjusteStockModal } from "@/components/AjusteStockModal";
+import { ALICUOTAS } from "@/lib/arca/calculo";
 
 const norm = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
@@ -65,6 +66,7 @@ export default function ProductosPage() {
         precio: String(p.precio).replace(".", ","),
         stock: p.stock,
         stockmin: p.stock_min,
+        iva: String(p.alicuota_iva ?? 21).replace(".", ","),
         activo: p.activo ? "si" : "no",
       }))
     );
@@ -88,6 +90,7 @@ export default function ProductosPage() {
           stock: parseNumero(r.stock),
           stock_min: parseNumero(r.stockmin ?? r.stock_min ?? r["stock minimo"]),
           activo: (r.activo ?? "si").toLowerCase() !== "no",
+          ...(r.iva ? { alicuota_iva: parseNumero(r.iva) } : {}),
         })
       );
     if (!validas.length) return toast.error("El archivo no tiene filas válidas (columna 'nombre' obligatoria)");
@@ -204,7 +207,7 @@ export default function ProductosPage() {
 
       {esAdmin && (
         <p className="mt-3 text-xs text-slate-500">
-          Importación CSV: columnas <code>codigo; nombre; categoria; marca; costo; precio; stock; stockmin; activo</code>. Separador ; o , — exportá primero para usar como plantilla.
+          Importación CSV: columnas <code>codigo; nombre; categoria; marca; costo; precio; stock; stockmin; activo; iva</code>. Separador ; o , — exportá primero para usar como plantilla.
         </p>
       )}
 
@@ -235,6 +238,7 @@ const VACIO: ProductoInput = {
   proveedor_id: null,
   activo: true,
   favorito: false,
+  alicuota_iva: 21,
 };
 
 function ProductoModal({
@@ -381,6 +385,15 @@ function ProductoModal({
         )}
         <Field label="Stock mínimo (alerta)">
           <NumInput value={f.stock_min} onChange={(n) => set("stock_min", n)} />
+        </Field>
+        <Field label="IVA (para factura A/B)">
+          <select className="input" value={f.alicuota_iva} onChange={(e) => set("alicuota_iva", Number(e.target.value))}>
+            {ALICUOTAS.map((a) => (
+              <option key={a} value={a}>
+                {String(a).replace(".", ",")} %
+              </option>
+            ))}
+          </select>
         </Field>
 
         <div className="flex gap-6 sm:col-span-2">

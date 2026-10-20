@@ -8,7 +8,9 @@ import { supabase } from "@/lib/supabase";
 import { useApp } from "@/context/AppContext";
 
 const traducir = (m: string) =>
-  m.includes("Invalid login credentials")
+  /invalid api key/i.test(m)
+    ? "Clave de Supabase inválida: revisá NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY en .env.local y reiniciá npm run dev"
+    : m.includes("Invalid login credentials")
     ? "Email o contraseña incorrectos"
     : m.includes("Email not confirmed")
       ? "Tenés que confirmar tu email (revisá tu casilla)"
@@ -26,9 +28,22 @@ export default function LoginPage() {
   const [nombre, setNombre] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [primeraVez, setPrimeraVez] = useState<boolean | null>(null);
+  const [diagnostico, setDiagnostico] = useState<string | null>(null);
 
+  // Verifica conexión, clave y que se haya corrido supabase/schema.sql
   useEffect(() => {
-    supabase.rpc("sistema_inicializado").then(({ data, error }) => setPrimeraVez(error ? false : data === false));
+    supabase.rpc("sistema_inicializado").then(({ data, error }) => {
+      if (!error) return setPrimeraVez(data === false);
+      setPrimeraVez(false);
+      const m = `${error.message ?? ""} ${(error as { hint?: string }).hint ?? ""}`;
+      setDiagnostico(
+        /api key|apikey|jwt|401/i.test(m)
+          ? "Supabase rechaza la clave (Invalid API key). Revisá NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY en .env.local: tiene que ser la publishable o la anon public de ESTE proyecto, completa, y reiniciar npm run dev."
+          : /sistema_inicializado|function|schema cache|could not find/i.test(m)
+            ? "La base no tiene las tablas/funciones: corré supabase/schema.sql en el SQL Editor de Supabase."
+            : "No se pudo conectar con Supabase: " + error.message
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -74,6 +89,7 @@ export default function LoginPage() {
           <h1 className="text-xl font-bold">Caja & Stock</h1>
           <p className="text-sm text-slate-500">{primeraVez ? "Configuración inicial: creá el administrador" : "Ingresá a tu cuenta"}</p>
         </div>
+        {diagnostico && <div className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{diagnostico}</div>}
         <form onSubmit={primeraVez ? crearAdmin : ingresar} className="space-y-3">
           {primeraVez && <input className="input" placeholder="Tu nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} required />}
           <input className="input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
