@@ -177,7 +177,11 @@ export interface Compra {
   medio: string;
   pagado_desde_caja: boolean;
   usuario_nombre: string;
+  fac_tipo: TipoFacturaCompra;
+  fac_iva: number;
 }
+
+export type TipoFacturaCompra = "sin_factura" | "A" | "B" | "C";
 
 export type TipoMovStock = "venta" | "compra" | "ajuste" | "merma" | "vencido" | "anulacion" | "alta";
 

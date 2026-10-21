@@ -13,11 +13,12 @@ Webapp de punto de venta para kiosco/drugstore: **ventas en tiempo real con lect
 | **Ventas** (`/ventas`) | Historial por fechas, detalle, reimpresión, **anulación con devolución de stock**, exportación CSV. | Vendedor: sólo hoy |
 | **Productos** | ABM con costo → margen → precio (redondeo a $10), código interno para productos sin EAN, favoritos, **aumento masivo de precios por %** (por categoría, con redondeo), importar/exportar CSV, stock valorizado. | Admin edita, vendedor consulta |
 | **Stock** | Lista de reposición por proveedor con cantidad sugerida (exportable como pedido), ajustes por inventario/rotura/vencido, historial de movimientos, pérdidas del período. | Admin |
-| **Compras** | Ingreso de mercadería: suma stock, actualiza costo y opcionalmente **mantiene el margen** ajustando el precio; pago desde caja o a cuenta corriente. | Admin |
+| **Compras** | Ingreso de mercadería: suma stock, actualiza costo y opcionalmente **mantiene el margen** ajustando el precio; pago desde caja o a cuenta corriente. Se indica si vino **con factura (A/B/C) o sin factura**, con número e IVA; se puede completar después. | Admin |
 | **Proveedores** | Contacto, WhatsApp directo, días de visita, productos asociados. | Admin |
 | **Gastos** | Gastos operativos por categoría (alquiler, luz, sueldos, impuestos, comisiones MP…), CSV. | Admin |
 | **Reportes** | Ventas, costo, **ganancia bruta, margen, gastos y resultado neto**, evolución diaria, medios de pago, día de semana, franja horaria, por categoría, por vendedor, ranking de productos. | Admin |
 | **Inicio** | Ventas y ganancia de hoy vs ayer, resultado del mes, últimos 14 días, ventas por hora, más vendidos, alertas de stock. | Admin |
+| **Libro consolidado** (`/libro`) | Ventas y compras del período en un solo lugar, con filtro **Ambas / Con factura / Sin factura** (también en Ventas, Compras y Reportes): totales, ventas − compras, comparación con vs. sin factura, resumen por mes, IVA débito/crédito estimado (Resp. Inscripto) y CSV. | Admin |
 | **Facturación electrónica ARCA** | Factura A, B y C y notas de crédito por web service directo (WSAA + WSFEv1), a pedido desde Ventas o la caja, con CAE, QR, IVA por alícuota y RG 5616. Ver [`docs/FACTURACION-ARCA.md`](docs/FACTURACION-ARCA.md). | Todos facturan; NC sólo admin |
 | **Usuarios / Configuración** | Roles admin/vendedor, alta sin cerrar tu sesión, desactivar, reset de contraseña. Datos del ticket, ancho de impresora, impresión automática, stock negativo, categorías. | Admin |
 

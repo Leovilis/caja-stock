@@ -278,6 +278,11 @@ begin
     values (r.id, r.nombre, 'merma', -2, r.stock, r.stock - 2, 'Se rompieron al acomodar (prueba)', v_admin.nombre);
   end loop;
 
+  -- ---------------- Factura del proveedor: ~6 de cada 10 compras con factura A ----------------
+  update compras set fac_tipo = 'A', fac_iva = round(total - total / 1.21, 2),
+         comprobante = '0003-' || lpad((10000 + (random() * 89999)::int)::text, 8, '0')
+  where comprobante like 'PRUEBA-%' and random() < 0.6;
+
   update productos set actualizado = now() where codigo like 'PRB-%';
   raise notice 'Datos de prueba cargados: % artículos, % ventas', (select count(*) from productos where codigo like 'PRB-%'), (select count(*) from ventas);
 end $$;

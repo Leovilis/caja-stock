@@ -245,6 +245,14 @@ create index if not exists comprobantes_venta_idx on comprobantes (venta_id);
 -- una sola factura y una sola nota de crédito por venta
 create unique index if not exists comprobantes_una_factura on comprobantes (venta_id, clase);
 
+-- Factura del proveedor en las compras (para separar compras con y sin factura)
+alter table compras add column if not exists fac_tipo text not null default 'sin_factura';
+alter table compras add column if not exists fac_iva  numeric(14,2) not null default 0;   -- IVA discriminado (sólo factura A)
+do $$ begin
+  alter table compras add constraint compras_fac_ck check (fac_tipo in ('sin_factura', 'A', 'B', 'C') and fac_iva >= 0
+    and (fac_tipo = 'A' or fac_iva = 0));
+exception when duplicate_object then null; end $$;
+
 -- Caché del ticket de acceso de WSAA (vale ~12 h). Sólo lo usa el servidor (sin políticas = invisible para el navegador)
 create table if not exists arca_ta (
   servicio  text not null,
@@ -529,13 +537,15 @@ end $$;
 -- COMPRAS
 -- ---------------------------------------------------------------------
 -- p: {proveedor_id, comprobante, medio, pagado_desde_caja, actualizar_costo, mantener_margen,
---     items:[{producto_id, cantidad, costo}]}
+--     fac_tipo ('sin_factura'|'A'|'B'|'C'), fac_iva, items:[{producto_id, cantidad, costo}]}
 create or replace function registrar_compra(p jsonb) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
   u perfiles; prov proveedores; v_id uuid; v_caja uuid; it jsonb; pr productos;
   v_items jsonb := '[]'; v_total numeric := 0; v_cant numeric; v_costo numeric; v_nuevo numeric;
   v_desde_caja boolean := coalesce((p->>'pagado_desde_caja')::boolean, false) and p->>'medio' = 'efectivo';
+  v_fac_tipo text := coalesce(nullif(p->>'fac_tipo', ''), 'sin_factura');
+  v_fac_iva numeric := coalesce((p->>'fac_iva')::numeric, 0);
 begin
   u := _exigir_admin();
   select * into prov from proveedores where id = (p->>'proveedor_id')::uuid;
@@ -573,14 +583,32 @@ begin
     v_total := v_total + round(v_cant * v_costo, 2);
   end loop;
 
-  insert into compras (id, proveedor_id, proveedor_nombre, comprobante, items, total, medio, pagado_desde_caja, usuario_nombre)
-  values (v_id, prov.id, prov.nombre, coalesce(p->>'comprobante', ''), v_items, v_total, p->>'medio', v_desde_caja, u.nombre);
+  if v_fac_tipo not in ('sin_factura', 'A', 'B', 'C') then raise exception 'Tipo de factura inválido'; end if;
+  if v_fac_tipo <> 'A' then v_fac_iva := 0; end if;
+  if v_fac_iva < 0 or (v_fac_iva > 0 and v_fac_iva >= v_total) then raise exception 'El IVA de la factura no es válido'; end if;
+
+  insert into compras (id, proveedor_id, proveedor_nombre, comprobante, items, total, medio, pagado_desde_caja, usuario_nombre, fac_tipo, fac_iva)
+  values (v_id, prov.id, prov.nombre, coalesce(p->>'comprobante', ''), v_items, v_total, p->>'medio', v_desde_caja, u.nombre,
+          v_fac_tipo, round(v_fac_iva, 2));
 
   if v_desde_caja and v_total > 0 then
     insert into movimientos_caja (caja_id, tipo, monto, concepto, usuario_nombre, compra_id)
     values (v_caja, 'egreso', v_total, 'Pago a proveedor: ' || prov.nombre, u.nombre, v_id);
   end if;
   return v_id;
+end $$;
+
+-- Cargar o corregir después los datos de la factura del proveedor (llega días después, se cargó mal, etc.)
+create or replace function datos_factura_compra(p_compra uuid, p_tipo text, p_numero text, p_iva numeric) returns void
+language plpgsql security definer set search_path = public as $$
+declare c compras; v_iva numeric := case when p_tipo = 'A' then round(coalesce(p_iva, 0), 2) else 0 end;
+begin
+  perform _exigir_admin();
+  select * into c from compras where id = p_compra for update;
+  if not found then raise exception 'Compra inexistente'; end if;
+  if p_tipo not in ('sin_factura', 'A', 'B', 'C') then raise exception 'Tipo de factura inválido'; end if;
+  if v_iva < 0 or (v_iva > 0 and v_iva >= c.total) then raise exception 'El IVA de la factura no es válido'; end if;
+  update compras set fac_tipo = p_tipo, fac_iva = v_iva, comprobante = coalesce(p_numero, '') where id = p_compra;
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -731,9 +759,9 @@ create trigger proteger_stock before update on productos for each row execute fu
 
 -- Permisos de ejecución
 revoke all on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
-  registrar_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, _perfil_activo, _exigir_admin from public, anon;
+  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, _perfil_activo, _exigir_admin from public, anon;
 grant execute on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
-  registrar_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, es_activo, es_admin to authenticated;
+  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, es_activo, es_admin to authenticated;
 grant execute on function sistema_inicializado to anon, authenticated;
 
 -- ---------------------------------------------------------------------

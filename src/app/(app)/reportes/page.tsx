@@ -11,6 +11,8 @@ import { descargarCSV } from "@/lib/csv";
 import type { Compra, Gasto, Venta } from "@/lib/types";
 import { medioLabel } from "@/lib/types";
 import { Empty, Loading, PageHeader, Stat } from "@/components/ui";
+import { FiltroFacturaSelector, useFiltroFactura } from "@/components/FiltroFactura";
+import { etiquetaFiltro, filtrarCompras, filtrarVentas, ventaConFactura } from "@/lib/fiscal";
 
 const COLORES = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
 const tickMoney = (v: number) => (v >= 1000000 ? `$${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`);
@@ -28,13 +30,22 @@ export default function ReportesPage() {
   const ini = dDesde.toISOString();
   const fin = dHasta.toISOString();
 
-  const { data: ventas, cargando } = useQuery<Venta>(
-    () => supabase.from("ventas").select("*, venta_items(*)").gte("fecha", ini).lte("fecha", fin),
-    ["ventas"],
+  const [filtro, setFiltro] = useFiltroFactura();
+  const { data: ventasTodas, cargando } = useQuery<Venta>(
+    () => supabase.from("ventas").select("*, venta_items(*), comprobantes(id, clase, letra)").gte("fecha", ini).lte("fecha", fin),
+    ["ventas", "comprobantes"],
     key
   );
   const { data: gastos } = useQuery<Gasto>(() => supabase.from("gastos").select("*").gte("fecha", desde).lte("fecha", hasta), ["gastos"], key);
-  const { data: compras } = useQuery<Compra>(() => supabase.from("compras").select("*").gte("fecha", ini).lte("fecha", fin), ["compras"], key);
+  const { data: comprasTodas } = useQuery<Compra>(() => supabase.from("compras").select("*").gte("fecha", ini).lte("fecha", fin), ["compras"], key);
+  const ventas = useMemo(() => filtrarVentas(ventasTodas, filtro), [ventasTodas, filtro]);
+  const compras = useMemo(() => filtrarCompras(comprasTodas, filtro), [comprasTodas, filtro]);
+  const ventasConFactura = useMemo(
+    () => ventasTodas.filter((v) => v.estado === "completada" && ventaConFactura(v)).reduce((a, v) => a + Number(v.total), 0),
+    [ventasTodas]
+  );
+  const totalTodas = ventasTodas.filter((v) => v.estado === "completada").reduce((a, v) => a + Number(v.total), 0);
+  const pctConFactura = totalTodas > 0 ? (ventasConFactura / totalTodas) * 100 : 0;
 
   const r = useMemo(() => analizarVentas(ventas), [ventas]);
   const serie = useMemo(() => serieDiaria(dDesde, dHasta, r.porDia), [r, desde, hasta]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -77,6 +88,15 @@ export default function ReportesPage() {
         <input className="input w-auto" type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
       </PageHeader>
 
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <FiltroFacturaSelector value={filtro} onChange={setFiltro} />
+        {filtro !== "ambas" && (
+          <span className="text-xs text-slate-500">
+            Ventas y compras: sólo {etiquetaFiltro(filtro).toLowerCase()}. Los gastos se muestran completos.
+          </span>
+        )}
+      </div>
+
       {cargando ? (
         <Loading />
       ) : (
@@ -87,7 +107,12 @@ export default function ReportesPage() {
             <Stat label="Gastos" value={money(gTotal)} tone="red" hint={`${gastos.length} registros`} />
             <Stat label="Resultado neto" value={money(neto)} tone={neto >= 0 ? "green" : "red"} hint="Ganancia bruta − gastos" />
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat
+              label="Ventas con / sin factura"
+              value={`${pct(pctConFactura)} / ${pct(totalTodas > 0 ? 100 - pctConFactura : 0)}`}
+              hint={`Con ${money(ventasConFactura)} · sin ${money(totalTodas - ventasConFactura)}`}
+            />
             <Stat label="Compras de mercadería" value={money(cTotal)} hint="Flujo de fondos (no es gasto: ya está en el costo)" />
             <Stat label="Descuentos otorgados" value={money(r.descuentos)} />
             <Stat label="Ventas anuladas" value={r.anuladas} />

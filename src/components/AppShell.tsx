@@ -20,6 +20,7 @@ import {
   Store,
   X,
   PackagePlus,
+  BookOpenCheck,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Loading } from "./ui";
@@ -35,6 +36,7 @@ const NAV = [
   { href: "/proveedores", label: "Proveedores", icon: Truck, admin: true },
   { href: "/gastos", label: "Gastos", icon: ClipboardList, admin: true },
   { href: "/reportes", label: "Reportes", icon: BarChart3, admin: true },
+  { href: "/libro", label: "Libro consolidado", icon: BookOpenCheck, admin: true },
   { href: "/usuarios", label: "Usuarios", icon: Users, admin: true },
   { href: "/configuracion", label: "Configuración", icon: Settings, admin: true },
 ];

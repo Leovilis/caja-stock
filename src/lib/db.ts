@@ -1,7 +1,7 @@
 // Acceso a datos. La lógica que mueve stock o plata vive en funciones de Postgres
 // (supabase/schema.sql) que corren atómicas en el servidor; acá sólo las invocamos.
 import { rpc, supabase, errMsg } from "./supabase";
-import type { Caja, Config, MedioPago, MovimientoCaja, Pago, Producto, Proveedor, Venta } from "./types";
+import type { Caja, Config, MedioPago, MovimientoCaja, Pago, Producto, Proveedor, TipoFacturaCompra, Venta } from "./types";
 import { round2 } from "./format";
 
 const check = <T>(r: { data: T; error: unknown }) => {
@@ -75,8 +75,12 @@ export interface NuevaCompra {
   actualizar_costo: boolean;
   mantener_margen: boolean;
   items: { producto_id: string; cantidad: number; costo: number }[];
+  fac_tipo: TipoFacturaCompra;
+  fac_iva: number;
 }
 export const registrarCompra = (c: NuevaCompra) => rpc<string>("registrar_compra", { p: c });
+export const datosFacturaCompra = (id: string, tipo: TipoFacturaCompra, numero: string, iva: number) =>
+  rpc<void>("datos_factura_compra", { p_compra: id, p_tipo: tipo, p_numero: numero, p_iva: iva });
 
 /* GASTOS ------------------------------------------------------------- */
 export const registrarGasto = (g: {

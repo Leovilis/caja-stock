@@ -13,6 +13,8 @@ import { imprimirComprobante, imprimirTicket } from "@/lib/ticket";
 import { anularConNotaCredito } from "@/lib/arca/cliente";
 import { nombreCbte, numeroCbte } from "@/lib/arca/calculo";
 import { FacturarModal } from "@/components/FacturarModal";
+import { FiltroFacturaSelector, useFiltroFactura } from "@/components/FiltroFactura";
+import { pasaFiltro, ventaConFactura } from "@/lib/fiscal";
 import type { Comprobante, Venta } from "@/lib/types";
 import { MEDIOS_PAGO, medioLabel } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
@@ -28,6 +30,8 @@ export default function VentasPage() {
   const [motivo, setMotivo] = useState("");
   const [facturando, setFacturando] = useState<Venta | null>(null);
   const [anulando, setAnulando] = useState(false);
+  const [filtroGuardado, setFiltro] = useFiltroFactura();
+  const filtro = esAdmin ? filtroGuardado : "ambas";
 
   // Los vendedores sólo ven el día de hoy
   const d = esAdmin ? desde : hoy;
@@ -47,6 +51,7 @@ export default function VentasPage() {
   const lista = ventas.filter(
     (v) =>
       (!medio || v.pagos.some((p) => p.medio === medio)) &&
+      pasaFiltro(ventaConFactura(v), filtro) &&
       (!buscar || String(v.numero) === buscar.trim() || v.venta_items.some((i) => i.nombre.toLowerCase().includes(buscar.toLowerCase())))
   );
   const ok = lista.filter((v) => v.estado === "completada");
@@ -104,6 +109,10 @@ export default function VentasPage() {
                       subtotal: String(i.subtotal).replace(".", ","),
                       costo: String(i.costo * i.cantidad).replace(".", ","),
                       total_ticket: String(v.total).replace(".", ","),
+                      factura: (() => {
+                        const f = facturaDe(v);
+                        return f ? `${nombreCbte("factura", f.letra)} ${numeroCbte(f.punto_venta, f.numero)}` : "";
+                      })(),
                       pagos: v.pagos.map((p) => `${medioLabel(p.medio)} ${p.monto}`).join(" + "),
                     }))
                   )
@@ -123,7 +132,8 @@ export default function VentasPage() {
       </div>
 
       <div className="card overflow-x-auto">
-        <div className="flex flex-wrap gap-2 p-3">
+        <div className="flex flex-wrap items-center gap-2 p-3">
+          {esAdmin && <FiltroFacturaSelector value={filtro} onChange={setFiltro} />}
           <input className="input max-w-xs" placeholder="N° de ticket o producto…" value={buscar} onChange={(e) => setBuscar(e.target.value)} />
           <select className="input w-auto" value={medio} onChange={(e) => setMedio(e.target.value)}>
             <option value="">Todos los medios</option>

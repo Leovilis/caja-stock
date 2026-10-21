@@ -2,15 +2,18 @@
 
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { Eye, Plus, Trash2 } from "lucide-react";
+import { Download, Eye, Plus, Trash2 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
-import { registrarCompra } from "@/lib/db";
+import { datosFacturaCompra, registrarCompra } from "@/lib/db";
+import { descargarCSV } from "@/lib/csv";
+import { compraConFactura, filtrarCompras, ivaContenido, TIPOS_FACTURA_COMPRA, etiquetaFiltro } from "@/lib/fiscal";
+import { FiltroFacturaSelector, useFiltroFactura } from "@/components/FiltroFactura";
 import { money, number, fechaHora, round2, isoDate, parseIsoDate, finDia, inicioMes } from "@/lib/format";
-import type { Compra, ItemCompra, MedioPago, Producto, Proveedor } from "@/lib/types";
+import type { Compra, ItemCompra, MedioPago, Producto, Proveedor, TipoFacturaCompra } from "@/lib/types";
 import { MEDIOS_PAGO, medioLabel } from "@/lib/types";
-import { Empty, Field, Modal, NumInput, PageHeader, Stat } from "@/components/ui";
+import { Badge, Empty, Field, Modal, NumInput, PageHeader, Stat } from "@/components/ui";
 
 const norm = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
@@ -19,7 +22,8 @@ export default function ComprasPage() {
   const [hasta, setHasta] = useState(isoDate(new Date()));
   const [nueva, setNueva] = useState(false);
   const [detalle, setDetalle] = useState<Compra | null>(null);
-  const { data: compras } = useQuery<Compra>(
+  const [filtro, setFiltro] = useFiltroFactura();
+  const { data: todas } = useQuery<Compra>(
     () =>
       supabase
         .from("compras")
@@ -30,6 +34,11 @@ export default function ComprasPage() {
     ["compras"],
     `${desde}-${hasta}`
   );
+  const compras = useMemo(() => filtrarCompras(todas, filtro), [todas, filtro]);
+  const detalleActual = detalle ? todas.find((c) => c.id === detalle.id) ?? detalle : null;
+  const conFac = todas.filter(compraConFactura);
+  const totalCon = conFac.reduce((a, c) => a + Number(c.total), 0);
+  const ivaCredito = conFac.reduce((a, c) => a + Number(c.fac_iva || 0), 0);
   const total = compras.reduce((a, c) => a + Number(c.total), 0);
   const porProv = useMemo(() => {
     const m: Record<string, number> = {};
@@ -42,13 +51,42 @@ export default function ComprasPage() {
       <PageHeader title="Compras" subtitle="Ingreso de mercadería de proveedores (suma stock y actualiza costos)">
         <input className="input w-auto" type="date" value={desde} onChange={(e) => setDesde(e.target.value)} />
         <input className="input w-auto" type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+        <button
+          className="btn-ghost"
+          onClick={() =>
+            descargarCSV(
+              `compras-${filtro}-${desde}_${hasta}`,
+              compras.map((c) => ({
+                fecha: fechaHora(c.fecha),
+                proveedor: c.proveedor_nombre,
+                factura: compraConFactura(c) ? `Factura ${c.fac_tipo}` : "Sin factura",
+                numero: c.comprobante,
+                neto: String(Number(c.total) - Number(c.fac_iva || 0)).replace(".", ","),
+                iva: String(c.fac_iva || 0).replace(".", ","),
+                total: String(c.total).replace(".", ","),
+                pago: medioLabel(c.medio),
+              }))
+            )
+          }
+        >
+          <Download size={16} /> CSV
+        </button>
         <button className="btn-primary" onClick={() => setNueva(true)}>
           <Plus size={16} /> Nueva compra
         </button>
       </PageHeader>
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
-        <Stat label="Total comprado" value={money(total)} tone="blue" hint={`${compras.length} compras`} />
+      <div className="mb-4">
+        <FiltroFacturaSelector value={filtro} onChange={setFiltro} />
+      </div>
+
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label={`Total comprado${filtro === "ambas" ? "" : " · " + etiquetaFiltro(filtro).toLowerCase()}`} value={money(total)} tone="blue" hint={`${compras.length} compras`} />
+        <Stat
+          label="Con / sin factura"
+          value={`${money(totalCon)} / ${money(todas.reduce((a, c) => a + Number(c.total), 0) - totalCon)}`}
+          hint={ivaCredito > 0 ? `IVA crédito fiscal (facturas A): ${money(ivaCredito)}` : `${conFac.length} con factura · ${todas.length - conFac.length} sin`}
+        />
         <Stat label="Principal proveedor" value={porProv[0]?.[0] ?? "—"} hint={porProv[0] ? money(porProv[0][1]) : ""} />
         <Stat label="A cuenta corriente" value={money(compras.filter((c) => c.medio === "cuenta_corriente").reduce((a, c) => a + Number(c.total), 0))} tone="amber" hint="Pendiente de pago al proveedor" />
       </div>
@@ -62,7 +100,7 @@ export default function ComprasPage() {
               <tr>
                 <th>Fecha</th>
                 <th>Proveedor</th>
-                <th>Comprobante</th>
+                <th>Factura</th>
                 <th>Ítems</th>
                 <th>Pago</th>
                 <th className="text-right">Total</th>
@@ -74,7 +112,10 @@ export default function ComprasPage() {
                 <tr key={c.id}>
                   <td className="text-xs">{fechaHora(c.fecha)}</td>
                   <td className="font-medium">{c.proveedor_nombre}</td>
-                  <td>{c.comprobante || "—"}</td>
+                  <td>
+                    {compraConFactura(c) ? <Badge tone="green">F{c.fac_tipo}</Badge> : <Badge>Sin factura</Badge>}
+                    {c.comprobante && <span className="ml-2 text-xs text-slate-500">{c.comprobante}</span>}
+                  </td>
                   <td>{c.items.length}</td>
                   <td>{medioLabel(c.medio)}{c.pagado_desde_caja ? " (caja)" : ""}</td>
                   <td className="text-right font-semibold tabular-nums">{money(c.total)}</td>
@@ -91,8 +132,10 @@ export default function ComprasPage() {
       </div>
 
       <NuevaCompraModal open={nueva} onClose={() => setNueva(false)} />
-      <Modal open={!!detalle} onClose={() => setDetalle(null)} title={`Compra a ${detalle?.proveedor_nombre ?? ""}`} size="lg">
-        {detalle && (
+      <Modal open={!!detalleActual} onClose={() => setDetalle(null)} title={`Compra a ${detalleActual?.proveedor_nombre ?? ""}`} size="lg">
+        {detalleActual && (
+          <>
+          <DatosFactura key={detalleActual.id + detalleActual.fac_tipo + detalleActual.comprobante + detalleActual.fac_iva} compra={detalleActual} />
           <table className="table">
             <thead>
               <tr>
@@ -103,7 +146,7 @@ export default function ComprasPage() {
               </tr>
             </thead>
             <tbody>
-              {detalle.items.map((i, k) => (
+              {detalleActual.items.map((i, k) => (
                 <tr key={k}>
                   <td>{i.nombre}</td>
                   <td className="text-right">{number(i.cantidad)}</td>
@@ -113,10 +156,11 @@ export default function ComprasPage() {
               ))}
               <tr className="font-bold">
                 <td colSpan={3}>Total</td>
-                <td className="text-right">{money(detalle.total)}</td>
+                <td className="text-right">{money(detalleActual.total)}</td>
               </tr>
             </tbody>
           </table>
+          </>
         )}
       </Modal>
     </div>
@@ -129,6 +173,9 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
   const { data: proveedores } = useQuery<Proveedor>(() => supabase.from("proveedores").select("*").order("nombre"), ["proveedores"], "", open);
   const [provId, setProvId] = useState("");
   const [comprobante, setComprobante] = useState("");
+  const [facTipo, setFacTipo] = useState<TipoFacturaCompra>("sin_factura");
+  const [facIva, setFacIva] = useState(0);
+  const [ivaManual, setIvaManual] = useState(false);
   const [items, setItems] = useState<ItemCompra[]>([]);
   const [q, setQ] = useState("");
   const [medio, setMedio] = useState<MedioPago | "cuenta_corriente">("efectivo");
@@ -166,6 +213,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
     });
 
   const total = round2(items.reduce((a, i) => a + i.subtotal, 0));
+  const ivaFinal = facTipo === "A" ? (ivaManual ? facIva : ivaContenido(total)) : 0;
   const puedeCaja = !!caja && medio === "efectivo";
 
   async function guardar() {
@@ -182,10 +230,14 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
         pagado_desde_caja: puedeCaja && desdeCaja,
         actualizar_costo: actCosto,
         mantener_margen: actCosto && mantenerMargen,
+        fac_tipo: facTipo,
+        fac_iva: ivaFinal,
       });
       toast.success("Compra registrada y stock actualizado");
       setItems([]);
       setComprobante("");
+      setFacTipo("sin_factura");
+      setIvaManual(false);
       onClose();
     } catch (e) {
       toast.error((e as Error).message);
@@ -196,7 +248,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   return (
     <Modal open={open} onClose={onClose} title="Nueva compra / ingreso de mercadería" size="xl">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Proveedor">
           <select className="input" value={provId} onChange={(e) => setProvId(e.target.value)}>
             <option value="">Elegir…</option>
@@ -207,8 +259,17 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
             ))}
           </select>
         </Field>
-        <Field label="N° factura / remito">
-          <input className="input" value={comprobante} onChange={(e) => setComprobante(e.target.value)} />
+        <Field label="Factura del proveedor">
+          <select className="input" value={facTipo} onChange={(e) => setFacTipo(e.target.value as TipoFacturaCompra)}>
+            {TIPOS_FACTURA_COMPRA.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={facTipo === "sin_factura" ? "N° de remito (opcional)" : "N° de factura"}>
+          <input className="input" placeholder={facTipo === "sin_factura" ? "" : "0003-00012345"} value={comprobante} onChange={(e) => setComprobante(e.target.value)} />
         </Field>
         <Field label="Forma de pago">
           <select className="input" value={medio} onChange={(e) => setMedio(e.target.value as typeof medio)}>
@@ -299,6 +360,24 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
           </label>
         </div>
         <div className="text-right">
+          {facTipo === "A" && (
+            <div className="mb-2 flex items-center justify-end gap-2 text-sm">
+              <span className="text-slate-500">IVA de la factura</span>
+              <NumInput
+                className="input w-32 py-1 text-right"
+                value={ivaFinal}
+                onChange={(n) => {
+                  setIvaManual(true);
+                  setFacIva(n);
+                }}
+              />
+              {ivaManual && (
+                <button className="text-xs text-brand-600 hover:underline" onClick={() => setIvaManual(false)}>
+                  21%
+                </button>
+              )}
+            </div>
+          )}
           <div className="text-xs uppercase text-slate-500">Total</div>
           <div className="text-2xl font-bold tabular-nums">{money(total)}</div>
           <button className="btn-primary mt-2" disabled={guardando} onClick={guardar}>
@@ -307,5 +386,53 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** Datos de la factura del proveedor: se pueden cargar o corregir después (la factura llega días más tarde, etc.) */
+function DatosFactura({ compra }: { compra: Compra }) {
+  const [tipo, setTipo] = useState<TipoFacturaCompra>(compra.fac_tipo ?? "sin_factura");
+  const [numero, setNumero] = useState(compra.comprobante ?? "");
+  const [iva, setIva] = useState(Number(compra.fac_iva) || (compra.fac_tipo === "A" ? 0 : ivaContenido(Number(compra.total))));
+  const [guardando, setGuardando] = useState(false);
+  const cambio = tipo !== compra.fac_tipo || numero !== (compra.comprobante ?? "") || (tipo === "A" && iva !== Number(compra.fac_iva));
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      await datosFacturaCompra(compra.id, tipo, numero.trim(), tipo === "A" ? iva : 0);
+      toast.success("Datos de factura actualizados");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 grid items-end gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-[1fr_1fr_auto_auto]">
+      <Field label="Factura del proveedor">
+        <select className="input" value={tipo} onChange={(e) => setTipo(e.target.value as TipoFacturaCompra)}>
+          {TIPOS_FACTURA_COMPRA.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="N° de factura / remito">
+        <input className="input" value={numero} onChange={(e) => setNumero(e.target.value)} />
+      </Field>
+      {tipo === "A" ? (
+        <Field label="IVA">
+          <NumInput className="input w-32 text-right" value={iva} onChange={setIva} />
+        </Field>
+      ) : (
+        <span />
+      )}
+      <button className="btn-primary" disabled={!cambio || guardando} onClick={guardar}>
+        Guardar
+      </button>
+    </div>
   );
 }
