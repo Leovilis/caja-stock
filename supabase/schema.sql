@@ -265,6 +265,21 @@ create table if not exists arca_ta (
 );
 
 -- ---------------------------------------------------------------------
+-- LICENCIA / PLAN (agregado v1.2)
+--   plan 'completo' = todo; 'basico' = POS, caja, ventas, productos, stock, usuarios y configuración.
+--   vence: último día de uso (null = sin vencimiento). Vencida, la app queda en modo consulta.
+--   Sólo se cambia desde el SQL Editor de Supabase (no hay política de UPDATE: el cliente no puede tocarla).
+-- ---------------------------------------------------------------------
+create table if not exists licencia (
+  id        int primary key default 1 check (id = 1),
+  plan      text not null default 'completo' check (plan in ('basico', 'completo')),
+  vence     date,
+  cliente   text not null default '',
+  contacto  text not null default ''
+);
+insert into licencia (id) values (1) on conflict do nothing;
+
+-- ---------------------------------------------------------------------
 -- HELPERS DE PERMISOS
 -- ---------------------------------------------------------------------
 create or replace function es_activo() returns boolean
@@ -277,13 +292,57 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from perfiles where id = auth.uid() and activo and rol = 'admin');
 $$;
 
--- Devuelve el perfil activo o corta con error
-create or replace function _perfil_activo() returns perfiles
+-- ¿El plan contratado incluye este módulo?
+create or replace function modulo_habilitado(p_modulo text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select plan = 'completo' from licencia where id = 1), true)
+      or p_modulo in ('pos', 'caja', 'ventas', 'productos', 'stock', 'usuarios', 'configuracion');
+$$;
+
+create or replace function _exigir_modulo(p_modulo text) returns void
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not modulo_habilitado(p_modulo) then
+    raise exception 'Esta función no está incluida en el plan básico';
+  end if;
+end $$;
+
+-- ¿La licencia está vigente? (para las políticas de edición directa)
+create or replace function licencia_activa() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select vence is null or (now() at time zone 'America/Argentina/Buenos_Aires')::date <= vence
+                   from licencia where id = 1), true);
+$$;
+
+-- Corta si la licencia venció (se puede usar hasta el día de vencimiento inclusive, hora Argentina)
+create or replace function _licencia_vigente() returns void
+language plpgsql stable security definer set search_path = public as $$
+declare l licencia;
+begin
+  select * into l from licencia where id = 1;
+  if found and l.vence is not null and (now() at time zone 'America/Argentina/Buenos_Aires')::date > l.vence then
+    raise exception 'El período de prueba venció el %. El sistema quedó en modo consulta: contactá a % para seguir usándolo.',
+      to_char(l.vence, 'DD/MM/YYYY'), coalesce(nullif(l.contacto, ''), 'tu proveedor del sistema');
+  end if;
+end $$;
+
+-- Perfil activo sin mirar la licencia (sólo para cerrar la caja aunque haya vencido)
+create or replace function _perfil_base() returns perfiles
 language plpgsql stable security definer set search_path = public as $$
 declare v perfiles;
 begin
   select * into v from perfiles where id = auth.uid() and activo;
   if not found then raise exception 'Usuario no habilitado'; end if;
+  return v;
+end $$;
+
+-- Devuelve el perfil activo o corta con error (también si la licencia venció)
+create or replace function _perfil_activo() returns perfiles
+language plpgsql stable security definer set search_path = public as $$
+declare v perfiles;
+begin
+  v := _perfil_base();
+  perform _licencia_vigente();
   return v;
 end $$;
 
@@ -548,6 +607,7 @@ declare
   v_fac_iva numeric := coalesce((p->>'fac_iva')::numeric, 0);
 begin
   u := _exigir_admin();
+  perform _exigir_modulo('compras');
   select * into prov from proveedores where id = (p->>'proveedor_id')::uuid;
   if not found then raise exception 'Elegí el proveedor'; end if;
   if jsonb_array_length(coalesce(p->'items', '[]')) = 0 then raise exception 'La compra no tiene productos'; end if;
@@ -604,6 +664,7 @@ language plpgsql security definer set search_path = public as $$
 declare c compras; v_iva numeric := case when p_tipo = 'A' then round(coalesce(p_iva, 0), 2) else 0 end;
 begin
   perform _exigir_admin();
+  perform _exigir_modulo('compras');
   select * into c from compras where id = p_compra for update;
   if not found then raise exception 'Compra inexistente'; end if;
   if p_tipo not in ('sin_factura', 'A', 'B', 'C') then raise exception 'Tipo de factura inválido'; end if;
@@ -621,6 +682,7 @@ language plpgsql security definer set search_path = public as $$
 declare u perfiles; v_id uuid; v_caja uuid;
 begin
   u := _perfil_activo();
+  perform _exigir_modulo('gastos');
   if coalesce(p_monto, 0) <= 0 then raise exception 'Monto inválido'; end if;
   -- los vendedores sólo pueden cargar gastos pagados con efectivo de la caja
   if u.rol <> 'admin' and not (p_desde_caja and p_medio = 'efectivo') then
@@ -671,7 +733,7 @@ create or replace function cerrar_caja(p_caja uuid, p_contado numeric, p_obs tex
 language plpgsql security definer set search_path = public as $$
 declare u perfiles; c cajas; v_por_medio jsonb; v_total numeric; v_cant int; v_ing numeric; v_egr numeric; v_esp numeric;
 begin
-  u := _perfil_activo();
+  u := _perfil_base(); -- sin chequear licencia: si vence con la caja abierta, igual se puede cerrar
   select * into c from cajas where id = p_caja for update;
   if not found or c.estado <> 'abierta' then raise exception 'La caja no está abierta'; end if;
 
@@ -709,6 +771,7 @@ alter table compras           enable row level security;
 alter table gastos            enable row level security;
 alter table comprobantes      enable row level security;
 alter table arca_ta           enable row level security;
+alter table licencia          enable row level security;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public' loop
@@ -720,14 +783,14 @@ create policy perfiles_sel on perfiles for select using (id = auth.uid() or es_a
 create policy perfiles_upd on perfiles for update using (es_admin() and id <> auth.uid()) with check (es_admin() and id <> auth.uid());
 
 create policy config_sel on config for select using (es_activo());
-create policy config_upd on config for update using (es_admin()) with check (es_admin());
+create policy config_upd on config for update using (es_admin() and licencia_activa()) with check (es_admin() and licencia_activa());
 
-create policy proveedores_all on proveedores for all using (es_admin()) with check (es_admin());
+create policy proveedores_all on proveedores for all using (es_admin() and modulo_habilitado('proveedores')) with check (es_admin() and modulo_habilitado('proveedores'));
 
 create policy productos_sel on productos for select using (es_activo());
 -- el admin edita datos; el stock sólo cambia por funciones (ver trigger abajo)
-create policy productos_upd on productos for update using (es_admin()) with check (es_admin());
-create policy productos_del on productos for delete using (es_admin());
+create policy productos_upd on productos for update using (es_admin() and licencia_activa()) with check (es_admin() and licencia_activa());
+create policy productos_del on productos for delete using (es_admin() and licencia_activa());
 
 create policy cajas_sel on cajas for select using (es_activo());
 -- vendedor: ventas de hoy (hora Argentina) y las de la caja abierta
@@ -738,11 +801,13 @@ create policy ventas_sel on ventas for select using (
 create policy venta_items_sel on venta_items for select using (exists (select 1 from ventas v where v.id = venta_id));
 create policy movcaja_sel on movimientos_caja for select using (es_activo());
 create policy movstock_sel on movimientos_stock for select using (es_admin());
-create policy compras_sel on compras for select using (es_admin());
-create policy gastos_sel on gastos for select using (es_admin());
+create policy compras_sel on compras for select using (es_admin() and modulo_habilitado('compras'));
+create policy gastos_sel on gastos for select using (es_admin() and modulo_habilitado('gastos'));
 create policy comprobantes_sel on comprobantes for select using (exists (select 1 from ventas v where v.id = venta_id));
 -- arca_ta: sin políticas a propósito (sólo el servidor con la clave secreta)
-create policy gastos_del on gastos for delete using (es_admin() and caja_id is null);
+create policy gastos_del on gastos for delete using (es_admin() and caja_id is null and modulo_habilitado('gastos'));
+-- licencia: todos la leen (la app muestra el plan y el vencimiento); nadie la modifica desde el navegador
+create policy licencia_sel on licencia for select using (es_activo());
 
 -- Evita que un UPDATE directo desde el cliente toque el stock (sólo funciones con movimiento)
 create or replace function _proteger_stock() returns trigger
@@ -759,9 +824,10 @@ create trigger proteger_stock before update on productos for each row execute fu
 
 -- Permisos de ejecución
 revoke all on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
-  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, _perfil_activo, _exigir_admin from public, anon;
+  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, _perfil_activo, _exigir_admin,
+  _perfil_base, _licencia_vigente, _exigir_modulo from public, anon;
 grant execute on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
-  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, es_activo, es_admin to authenticated;
+  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, es_activo, es_admin, modulo_habilitado, licencia_activa to authenticated;
 grant execute on function sistema_inicializado to anon, authenticated;
 
 -- ---------------------------------------------------------------------
@@ -770,7 +836,7 @@ grant execute on function sistema_inicializado to anon, authenticated;
 do $$
 declare t text;
 begin
-  foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras','movimientos_stock','proveedores','comprobantes'] loop
+  foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras','movimientos_stock','proveedores','comprobantes','licencia'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
     end if;

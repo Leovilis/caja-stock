@@ -3,8 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase, errorConfig } from "@/lib/supabase";
-import type { Caja, Config, Perfil } from "@/lib/types";
-import { CONFIG_DEFAULT } from "@/lib/types";
+import type { Caja, Config, Licencia, Modulo, Perfil } from "@/lib/types";
+import { CONFIG_DEFAULT, LICENCIA_DEFAULT, diasLicencia, moduloHabilitado } from "@/lib/types";
 
 interface AppState {
   user: User | null;
@@ -13,6 +13,13 @@ interface AppState {
   esAdmin: boolean;
   config: Config;
   caja: Caja | null; // turno de caja abierto (en tiempo real)
+  licencia: Licencia;
+  /** ¿El plan incluye este módulo? */
+  modulo: (m: Modulo) => boolean;
+  /** Días hasta el vencimiento de la licencia (null = sin vencimiento) */
+  diasRestantes: number | null;
+  /** La licencia venció: la app queda en modo consulta */
+  vencida: boolean;
   recuperandoClave: boolean; // el usuario entró desde el link "olvidé mi contraseña"
   finRecuperacion: () => void;
   salir: () => Promise<void>;
@@ -27,6 +34,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cargandoPerfil, setCargandoPerfil] = useState(false);
   const [config, setConfig] = useState<Config>(CONFIG_DEFAULT);
   const [caja, setCaja] = useState<Caja | null>(null);
+  const [licencia, setLicencia] = useState<Licencia>(LICENCIA_DEFAULT);
   const [recuperandoClave, setRecuperando] = useState(false);
 
   useEffect(() => {
@@ -75,18 +83,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { data } = await supabase.from("cajas").select("*").eq("estado", "abierta").maybeSingle();
       setCaja((data as Caja) ?? null);
     };
+    // Si la tabla todavía no existe (schema viejo), queda el plan completo sin vencimiento
+    const cargarLicencia = async () => {
+      const { data } = await supabase.from("licencia").select("plan, vence, cliente, contacto").eq("id", 1).maybeSingle();
+      setLicencia(data ? { ...LICENCIA_DEFAULT, ...(data as Partial<Licencia>) } : LICENCIA_DEFAULT);
+    };
     cargarConfig();
     cargarCaja();
+    cargarLicencia();
     const ch = supabase
       .channel("global")
       .on("postgres_changes", { event: "*", schema: "public", table: "config" }, cargarConfig)
       .on("postgres_changes", { event: "*", schema: "public", table: "cajas" }, cargarCaja)
+      .on("postgres_changes", { event: "*", schema: "public", table: "licencia" }, cargarLicencia)
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
   }, [activo]);
 
+  const diasRestantes = diasLicencia(licencia);
   const value: AppState = {
     user,
     perfil,
@@ -94,6 +110,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     esAdmin: perfil?.rol === "admin" && perfil.activo,
     config,
     caja,
+    licencia,
+    modulo: (m) => moduloHabilitado(licencia, m),
+    diasRestantes,
+    vencida: diasRestantes !== null && diasRestantes < 0,
     recuperandoClave,
     finRecuperacion: () => setRecuperando(false),
     salir: async () => {

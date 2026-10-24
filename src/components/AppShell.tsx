@@ -21,31 +21,41 @@ import {
   X,
   PackagePlus,
   BookOpenCheck,
+  Clock,
+  Lock,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Loading } from "./ui";
+import type { Modulo } from "@/lib/types";
 
-const NAV = [
-  { href: "/", label: "Inicio", icon: LayoutDashboard, admin: true },
-  { href: "/pos", label: "Punto de venta", icon: ShoppingCart },
-  { href: "/caja", label: "Caja", icon: Wallet },
-  { href: "/ventas", label: "Ventas", icon: Receipt },
-  { href: "/productos", label: "Productos", icon: Package },
-  { href: "/stock", label: "Stock", icon: Boxes, admin: true },
-  { href: "/compras", label: "Compras", icon: PackagePlus, admin: true },
-  { href: "/proveedores", label: "Proveedores", icon: Truck, admin: true },
-  { href: "/gastos", label: "Gastos", icon: ClipboardList, admin: true },
-  { href: "/reportes", label: "Reportes", icon: BarChart3, admin: true },
-  { href: "/libro", label: "Libro consolidado", icon: BookOpenCheck, admin: true },
-  { href: "/usuarios", label: "Usuarios", icon: Users, admin: true },
-  { href: "/configuracion", label: "Configuración", icon: Settings, admin: true },
+const NAV: { href: string; label: string; icon: typeof Store; modulo: Modulo; admin?: boolean }[] = [
+  { href: "/", label: "Inicio", icon: LayoutDashboard, modulo: "inicio", admin: true },
+  { href: "/pos", label: "Punto de venta", icon: ShoppingCart, modulo: "pos" },
+  { href: "/caja", label: "Caja", icon: Wallet, modulo: "caja" },
+  { href: "/ventas", label: "Ventas", icon: Receipt, modulo: "ventas" },
+  { href: "/productos", label: "Productos", icon: Package, modulo: "productos" },
+  { href: "/stock", label: "Stock", icon: Boxes, modulo: "stock", admin: true },
+  { href: "/compras", label: "Compras", icon: PackagePlus, modulo: "compras", admin: true },
+  { href: "/proveedores", label: "Proveedores", icon: Truck, modulo: "proveedores", admin: true },
+  { href: "/gastos", label: "Gastos", icon: ClipboardList, modulo: "gastos", admin: true },
+  { href: "/reportes", label: "Reportes", icon: BarChart3, modulo: "reportes", admin: true },
+  { href: "/libro", label: "Libro consolidado", icon: BookOpenCheck, modulo: "libro", admin: true },
+  { href: "/usuarios", label: "Usuarios", icon: Users, modulo: "usuarios", admin: true },
+  { href: "/configuracion", label: "Configuración", icon: Settings, modulo: "configuracion", admin: true },
 ];
 
 /** Rutas que sólo puede ver un administrador */
 const SOLO_ADMIN = NAV.filter((n) => n.admin).map((n) => n.href);
 
+/** "2026-11-30" → "30/11/2026" */
+const fechaCorta = (iso: string) => iso.split("-").reverse().join("/");
+
+/** Módulo al que pertenece una ruta (o null si no es una sección del menú) */
+const moduloDeRuta = (path: string) =>
+  NAV.find((n) => (n.href === "/" ? path === "/" : path === n.href || path.startsWith(n.href + "/")))?.modulo ?? null;
+
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, perfil, cargando, esAdmin, salir, caja, config } = useApp();
+  const { user, perfil, cargando, esAdmin, salir, caja, config, licencia, modulo, diasRestantes, vencida } = useApp();
   const router = useRouter();
   const path = usePathname();
   const [abierto, setAbierto] = useState(false);
@@ -57,6 +67,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (perfil && !esAdmin && SOLO_ADMIN.includes(path)) router.replace("/pos");
   }, [perfil, esAdmin, path, router]);
+
+  // Secciones que no incluye el plan contratado
+  const modRuta = moduloDeRuta(path);
+  const fueraDelPlan = !!modRuta && !modulo(modRuta);
+  useEffect(() => {
+    if (perfil && fueraDelPlan) router.replace("/pos");
+  }, [perfil, fueraDelPlan, router]);
 
   useEffect(() => setAbierto(false), [path]);
 
@@ -78,7 +95,24 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const items = NAV.filter((n) => esAdmin || !n.admin);
+  const items = NAV.filter((n) => (esAdmin || !n.admin) && modulo(n.modulo));
+  const esBasico = licencia.plan === "basico";
+  const contacto = licencia.contacto || "tu proveedor del sistema";
+  const aviso = vencida ? (
+    <div className="flex items-start gap-2 bg-rose-600 px-4 py-2 text-sm text-white">
+      <Lock size={16} className="mt-0.5 shrink-0" />
+      <span>
+        <b>El período de prueba venció el {fechaCorta(licencia.vence!)}.</b> Podés consultar todo y cerrar la caja, pero no registrar ventas ni cambios. Contactá a {contacto} para seguir usándolo.
+      </span>
+    </div>
+  ) : diasRestantes !== null && diasRestantes <= 7 ? (
+    <div className="flex items-start gap-2 bg-amber-100 px-4 py-2 text-sm text-amber-900">
+      <Clock size={16} className="mt-0.5 shrink-0" />
+      <span>
+        {diasRestantes === 0 ? "La prueba vence hoy." : `La prueba vence en ${diasRestantes} ${diasRestantes === 1 ? "día" : "días"}.`} Para seguir usándolo, contactá a {contacto}.
+      </span>
+    </div>
+  ) : null;
   const esPOS = path === "/pos";
 
   const sidebar = (
@@ -89,7 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <div className="min-w-0">
           <div className="truncate font-bold text-white">{config.nombre}</div>
-          <div className="text-xs text-slate-400">Caja & Stock</div>
+          <div className="text-xs text-slate-400">Caja & Stock{esBasico && " · Plan básico"}</div>
         </div>
       </div>
       <div className="mx-4 mb-3 rounded-lg bg-slate-800 px-3 py-2 text-xs">
@@ -98,6 +132,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="font-semibold text-emerald-400">ABIERTA</span>
         ) : (
           <span className="font-semibold text-rose-400">CERRADA</span>
+        )}
+        {diasRestantes !== null && (
+          <div className={`mt-1 ${diasRestantes < 0 ? "text-rose-400" : "text-slate-400"}`}>
+            {diasRestantes < 0 ? "Prueba vencida" : `Prueba hasta el ${fechaCorta(licencia.vence!)}`}
+          </div>
         )}
       </div>
       <div className="flex-1 space-y-0.5 overflow-y-auto px-3">
@@ -146,6 +185,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <span className="font-semibold">{config.nombre}</span>
         </header>
+        {aviso}
         <main className={esPOS ? "flex-1 p-3 lg:p-4" : "flex-1 p-4 lg:p-8"}>{children}</main>
       </div>
     </div>

@@ -41,6 +41,25 @@ Webapp de punto de venta para kiosco/drugstore: **ventas en tiempo real con lect
    Después, en *Usuarios*, das de alta a los vendedores. Si alguien se registra por su cuenta queda **inactivo** hasta que lo actives.
 7. Cargá productos a mano o con *Productos → Importar* (`productos-ejemplo.csv` sirve de plantilla).
 
+### Plan básico de prueba (para clientes)
+
+Cada cliente que prueba el sistema usa **su propio proyecto de Supabase y su propio deploy en Vercel**, ambos creados con **tu** cuenta (así el cliente no puede tocar la licencia).
+
+| Plan | Incluye |
+|---|---|
+| `completo` (por defecto) | Todo |
+| `basico` | Punto de venta, Caja, Ventas, Productos, Stock, Usuarios y Configuración. **Sin** Inicio, Compras, Proveedores, Gastos, Reportes, Libro ni Facturación ARCA |
+
+1. Nuevo proyecto en Supabase → correr `supabase/schema.sql` y después `supabase/plan_basico.sql` (editá nombre, contacto y fecha de vencimiento).
+2. Nuevo proyecto en Vercel desde el mismo repo, con las variables de **ese** Supabase. No cargues `SUPABASE_SECRET_KEY` ni el certificado de ARCA.
+3. El cliente entra, crea su usuario administrador y empieza a usarlo.
+
+**Vencimiento:** los últimos 7 días aparece un aviso. Pasada la fecha, la app queda en **modo consulta**: se ve todo y se puede cerrar la caja que esté abierta, pero no se puede vender, abrir caja ni modificar productos o stock. Lo bloquea la base (no sólo la pantalla).
+
+**Si lo compra:** en el SQL Editor de su proyecto, `update licencia set plan = 'completo', vence = null;` (o sólo `vence = null` para dejarlo en básico). La app se actualiza sola, sin reinstalar y sin perder datos.
+
+> El plan gratis de Supabase permite **2 proyectos activos** por organización. Para más clientes de prueba: otra organización en Supabase o plan Pro.
+
 ### Deploy
 - **Vercel:** importar el repo y cargar las dos variables `NEXT_PUBLIC_SUPABASE_*`.
 - **Servidor propio con PM2:** `npm run build && pm2 start npm --name caja-stock -- start` detrás de Apache como reverse proxy.

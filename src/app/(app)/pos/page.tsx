@@ -27,7 +27,7 @@ const norm = (s: string) =>
 const CARRITO_KEY = "pos-carrito-v2";
 
 export default function POSPage() {
-  const { caja, config } = useApp();
+  const { caja, config, modulo } = useApp();
   const { data: productos } = useQuery<Producto>(() => supabase.from("productos").select("*").eq("activo", true), ["productos"]);
 
   const [busqueda, setBusqueda] = useState("");
@@ -322,7 +322,7 @@ export default function POSPage() {
                   <button className="btn-ghost btn-sm" onClick={() => imprimirTicket(ultimaVenta, config)}>
                     <Printer size={14} /> Reimprimir ticket #{ultimaVenta.numero}
                   </button>
-                  {facturacionConfigurada(config) && !ultimaFacturada && (
+                  {modulo("facturacion") && facturacionConfigurada(config) && !ultimaFacturada && (
                     <button className="btn-primary btn-sm" onClick={() => setFacturando(ultimaVenta)}>
                       <FileCheck2 size={14} /> Facturar #{ultimaVenta.numero}
                     </button>

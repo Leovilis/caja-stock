@@ -20,7 +20,8 @@ import { MEDIOS_PAGO, medioLabel } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
 
 export default function VentasPage() {
-  const { esAdmin, config } = useApp();
+  const { esAdmin, config, modulo } = useApp();
+  const conFacturacion = modulo("facturacion");
   const hoy = isoDate(new Date());
   const [desde, setDesde] = useState(hoy);
   const [hasta, setHasta] = useState(hoy);
@@ -31,7 +32,7 @@ export default function VentasPage() {
   const [facturando, setFacturando] = useState<Venta | null>(null);
   const [anulando, setAnulando] = useState(false);
   const [filtroGuardado, setFiltro] = useFiltroFactura();
-  const filtro = esAdmin ? filtroGuardado : "ambas";
+  const filtro = esAdmin && conFacturacion ? filtroGuardado : "ambas";
 
   // Los vendedores sólo ven el día de hoy
   const d = esAdmin ? desde : hoy;
@@ -133,7 +134,7 @@ export default function VentasPage() {
 
       <div className="card overflow-x-auto">
         <div className="flex flex-wrap items-center gap-2 p-3">
-          {esAdmin && <FiltroFacturaSelector value={filtro} onChange={setFiltro} />}
+          {esAdmin && conFacturacion && <FiltroFacturaSelector value={filtro} onChange={setFiltro} />}
           <input className="input max-w-xs" placeholder="N° de ticket o producto…" value={buscar} onChange={(e) => setBuscar(e.target.value)} />
           <select className="input w-auto" value={medio} onChange={(e) => setMedio(e.target.value)}>
             <option value="">Todos los medios</option>
@@ -271,7 +272,7 @@ export default function VentasPage() {
                   ))}
               </div>
             )}
-            {detalle.estado === "completada" && !facturaDe(detalle) && (
+            {conFacturacion && detalle.estado === "completada" && !facturaDe(detalle) && (
               <button className="btn-primary w-full" onClick={() => setFacturando(detalle)}>
                 <FileCheck2 size={16} /> Facturar (ARCA)
               </button>

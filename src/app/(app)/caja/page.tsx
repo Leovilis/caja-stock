@@ -194,7 +194,7 @@ export default function CajaPage() {
 }
 
 function MovimientoModal({ tipo, onClose }: { tipo: null | "ingreso" | "egreso"; onClose: () => void }) {
-  const { caja, config } = useApp();
+  const { caja, config, modulo } = useApp();
   const [monto, setMonto] = useState(0);
   const [concepto, setConcepto] = useState("");
   const [esGasto, setEsGasto] = useState(false);
@@ -249,7 +249,7 @@ function MovimientoModal({ tipo, onClose }: { tipo: null | "ingreso" | "egreso";
             placeholder={tipo === "ingreso" ? "Ej: cambio extra" : "Ej: retiro del dueño, pago repartidor"}
           />
         </Field>
-        {tipo === "egreso" && (
+        {tipo === "egreso" && modulo("gastos") && (
           <>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={esGasto} onChange={(e) => setEsGasto(e.target.checked)} />

@@ -43,7 +43,7 @@ function ListaEditable({ titulo, items, onChange }: { titulo: string; items: str
 }
 
 export default function ConfigPage() {
-  const { config } = useApp();
+  const { config, modulo } = useApp();
   const [f, setF] = useState<Config>(config);
   const [guardando, setGuardando] = useState(false);
   const [probando, setProbando] = useState(false);
@@ -142,6 +142,7 @@ export default function ConfigPage() {
           </p>
         </div>
 
+        {modulo("facturacion") && (
         <div className="card grid gap-3 p-5 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <h3 className="font-semibold">Facturación electrónica (ARCA)</h3>
@@ -233,10 +234,13 @@ export default function ConfigPage() {
             )}
           </div>
         </div>
+        )}
 
         <div className="grid gap-6 md:grid-cols-2">
           <ListaEditable titulo="Categorías de productos" items={f.categorias_producto} onChange={(v) => set("categorias_producto", v)} />
-          <ListaEditable titulo="Categorías de gastos" items={f.categorias_gasto} onChange={(v) => set("categorias_gasto", v)} />
+          {modulo("gastos") && (
+            <ListaEditable titulo="Categorías de gastos" items={f.categorias_gasto} onChange={(v) => set("categorias_gasto", v)} />
+          )}
         </div>
       </div>
     </div>

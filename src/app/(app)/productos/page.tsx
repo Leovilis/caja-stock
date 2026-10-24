@@ -254,6 +254,7 @@ function ProductoModal({
   proveedores: Proveedor[];
   productos: Producto[];
 }) {
+  const { modulo } = useApp();
   const [f, setF] = useState<ProductoInput>(VACIO);
   const [markup, setMarkup] = useState(40);
   const [guardando, setGuardando] = useState(false);
@@ -332,16 +333,18 @@ function ProductoModal({
             ))}
           </datalist>
         </Field>
-        <Field label="Proveedor">
-          <select className="input" value={f.proveedor_id ?? ""} onChange={(e) => set("proveedor_id", e.target.value || null)}>
-            <option value="">—</option>
-            {proveedores.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nombre}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {modulo("proveedores") && (
+          <Field label="Proveedor">
+            <select className="input" value={f.proveedor_id ?? ""} onChange={(e) => set("proveedor_id", e.target.value || null)}>
+              <option value="">—</option>
+              {proveedores.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
 
         <div className="grid grid-cols-3 gap-3 rounded-xl bg-slate-50 p-3 sm:col-span-2">
           <Field label="Costo">
@@ -386,15 +389,17 @@ function ProductoModal({
         <Field label="Stock mínimo (alerta)">
           <NumInput value={f.stock_min} onChange={(n) => set("stock_min", n)} />
         </Field>
-        <Field label="IVA (para factura A/B)">
-          <select className="input" value={f.alicuota_iva} onChange={(e) => set("alicuota_iva", Number(e.target.value))}>
-            {ALICUOTAS.map((a) => (
-              <option key={a} value={a}>
-                {String(a).replace(".", ",")} %
-              </option>
-            ))}
-          </select>
-        </Field>
+        {modulo("facturacion") && (
+          <Field label="IVA (para factura A/B)">
+            <select className="input" value={f.alicuota_iva} onChange={(e) => set("alicuota_iva", Number(e.target.value))}>
+              {ALICUOTAS.map((a) => (
+                <option key={a} value={a}>
+                  {String(a).replace(".", ",")} %
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
 
         <div className="flex gap-6 sm:col-span-2">
           <label className="flex items-center gap-2 text-sm">

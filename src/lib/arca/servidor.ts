@@ -47,6 +47,11 @@ export async function usuarioDesdeRequest(req: Request): Promise<{ perfil: Perfi
   if (error || !data.user) throw new ArcaError("Sesión vencida: volvé a ingresar", 401);
   const { data: perfil } = await db.from("perfiles").select("id, nombre, rol, activo").eq("id", data.user.id).maybeSingle();
   if (!perfil?.activo) throw new ArcaError("Usuario no habilitado", 403);
+  // Plan y vencimiento (si la tabla no existe todavía, se toma como plan completo)
+  const { data: lic } = await db.from("licencia").select("plan, vence").eq("id", 1).maybeSingle();
+  if (lic?.plan === "basico") throw new ArcaError("La facturación electrónica no está incluida en el plan básico", 403);
+  const hoyAR = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+  if (lic?.vence && hoyAR > lic.vence) throw new ArcaError("La licencia del sistema venció", 403);
   return { perfil: perfil as Perfil, token };
 }
 

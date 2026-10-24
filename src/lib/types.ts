@@ -245,3 +245,45 @@ export const CONFIG_DEFAULT: Config = {
 
 /** ¿Están cargados los datos mínimos para facturar? */
 export const facturacionConfigurada = (c: Config) => !!(c.fiscal_cuit && c.fiscal_razon_social && c.fiscal_punto_venta > 0);
+
+// ---------------------------------------------------------------------
+// Licencia / plan (tabla `licencia`, fila única; sólo se cambia desde el SQL Editor)
+// ---------------------------------------------------------------------
+export type Plan = "basico" | "completo";
+
+export type Modulo =
+  | "inicio"
+  | "pos"
+  | "caja"
+  | "ventas"
+  | "productos"
+  | "stock"
+  | "compras"
+  | "proveedores"
+  | "gastos"
+  | "reportes"
+  | "libro"
+  | "facturacion"
+  | "usuarios"
+  | "configuracion";
+
+/** Módulos incluidos en el plan básico (debe coincidir con modulo_habilitado() en schema.sql) */
+export const MODULOS_BASICO: Modulo[] = ["pos", "caja", "ventas", "productos", "stock", "usuarios", "configuracion"];
+
+export interface Licencia {
+  plan: Plan;
+  vence: string | null; // YYYY-MM-DD, último día de uso
+  cliente: string;
+  contacto: string;
+}
+
+export const LICENCIA_DEFAULT: Licencia = { plan: "completo", vence: null, cliente: "", contacto: "" };
+
+export const moduloHabilitado = (l: Licencia, m: Modulo) => l.plan === "completo" || MODULOS_BASICO.includes(m);
+
+/** Días que faltan hasta el vencimiento (0 = vence hoy, negativo = vencida, null = sin vencimiento), en hora Argentina */
+export function diasLicencia(l: Licencia): number | null {
+  if (!l.vence) return null;
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+  return Math.round((Date.parse(l.vence) - Date.parse(hoy)) / 86_400_000);
+}
