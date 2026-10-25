@@ -517,6 +517,49 @@ begin
   return _invitar(u.comercio_id, p_email, p_nombre, p_rol);
 end $$;
 
+-- Cambio de contraseña.
+--   * La propia: cualquiera, indicando la contraseña actual.
+--   * La de otro: el admin, sólo de usuarios de SU comercio; el administrador general, de cualquier usuario de comercio.
+--   Al cambiar la de otro se cierran sus sesiones abiertas.
+create or replace function cambiar_clave(p_email text, p_nueva text, p_actual text default null) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare v_uid uuid; v_hash text; v_obj perfiles; v_yo perfiles;
+begin
+  if auth.uid() is null then raise exception 'Sesión no válida'; end if;
+  if length(coalesce(p_nueva, '')) < 6 then raise exception 'La contraseña debe tener al menos 6 caracteres'; end if;
+  select id, encrypted_password into v_uid, v_hash from auth.users where lower(email) = lower(trim(p_email));
+  if v_uid is null then raise exception 'Usuario inexistente'; end if;
+
+  if v_uid = auth.uid() then
+    if v_hash is null or v_hash <> crypt(coalesce(p_actual, ''), v_hash) then
+      raise exception 'La contraseña actual no es correcta';
+    end if;
+  else
+    if exists (select 1 from superadmins where user_id = v_uid) then
+      raise exception 'No se puede cambiar la contraseña del administrador general';
+    end if;
+    select * into v_obj from perfiles where id = v_uid;
+    if not found then raise exception 'Usuario inexistente'; end if;
+    if not es_superadmin() then
+      v_yo := _perfil_base();
+      if v_yo.rol <> 'admin' then raise exception 'Sólo un administrador puede cambiar la contraseña de otro usuario'; end if;
+      if v_yo.comercio_id <> v_obj.comercio_id then raise exception 'Sólo podés cambiar contraseñas de usuarios de tu comercio'; end if;
+    end if;
+  end if;
+
+  update auth.users set encrypted_password = crypt(p_nueva, gen_salt('bf')), updated_at = now() where id = v_uid;
+
+  -- a otro usuario: cerrar sus sesiones (vuelve a ingresar con la nueva)
+  if v_uid <> auth.uid() then
+    if to_regclass('auth.sessions') is not null then
+      execute 'delete from auth.sessions where user_id = $1' using v_uid;
+    end if;
+    if to_regclass('auth.refresh_tokens') is not null then
+      execute 'delete from auth.refresh_tokens where user_id = $1::text' using v_uid;
+    end if;
+  end if;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- PANEL DEL ADMINISTRADOR GENERAL (superadmin)
 --   Gestiona comercios (plan, vencimiento, suspensión). No ve ventas ni productos de otros.
@@ -1091,10 +1134,10 @@ end $$;
 
 revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, mover_stock, aumentar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
-  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar from public, anon;
+  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave from public, anon;
 grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, mover_stock, aumentar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
-  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar,
+  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave,
   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;
 grant execute on function sistema_inicializado to anon, authenticated;
 

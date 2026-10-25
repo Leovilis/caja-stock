@@ -21,6 +21,10 @@ export async function guardarConfig(cfg: Config) {
 }
 
 /* USUARIOS ----------------------------------------------------------- */
+/** Propia (con la actual) o de un usuario de tu comercio / de un cliente (administrador general) */
+export const cambiarClave = (email: string, nueva: string, actual?: string) =>
+  rpc<void>("cambiar_clave", { p_email: email, p_nueva: nueva, p_actual: actual ?? null });
+
 /** Registra la invitación en la base. true = la cuenta ya existía y quedó agregada (no hay que crearla). */
 export const invitarUsuario = (email: string, nombre: string, rol: "admin" | "vendedor") =>
   rpc<boolean>("invitar_usuario", { p_email: email, p_nombre: nombre, p_rol: rol });

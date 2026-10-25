@@ -9,6 +9,7 @@ import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import type { Perfil, Rol } from "@/lib/types";
 import { Badge, Field, Modal, PageHeader } from "@/components/ui";
+import { CambiarClaveModal } from "@/components/CambiarClaveModal";
 
 export default function UsuariosPage() {
   const { perfil } = useApp();
@@ -16,6 +17,7 @@ export default function UsuariosPage() {
   const [nuevo, setNuevo] = useState(false);
   const [f, setF] = useState({ nombre: "", email: "", pass: "", rol: "vendedor" as Rol });
   const [guardando, setGuardando] = useState(false);
+  const [clave, setClave] = useState<Perfil | null>(null);
 
   async function crear() {
     if (!f.nombre.trim() || !f.email.trim()) return toast.error("Completá nombre y email");
@@ -92,15 +94,7 @@ export default function UsuariosPage() {
                   <Badge tone={u.activo ? "green" : "red"}>{u.activo ? "Activo" : "Inactivo"}</Badge>
                 </td>
                 <td className="whitespace-nowrap text-right">
-                  <button
-                    className="p-1 text-slate-400 hover:text-brand-600"
-                    title="Enviar email para cambiar contraseña"
-                    onClick={async () => {
-                      const { error } = await supabase.auth.resetPasswordForEmail(u.email, { redirectTo: `${window.location.origin}/login` });
-                      if (error) toast.error(errMsg(error));
-                      else toast.success("Email enviado a " + u.email);
-                    }}
-                  >
+                  <button className="p-1 text-slate-400 hover:text-brand-600" title="Cambiar contraseña" onClick={() => setClave(u)}>
                     <KeyRound size={16} />
                   </button>
                   {u.id !== perfil?.id && (
@@ -114,6 +108,8 @@ export default function UsuariosPage() {
           </tbody>
         </table>
       </div>
+
+      <CambiarClaveModal email={clave?.email ?? null} nombre={clave?.nombre} propia={clave?.id === perfil?.id} onClose={() => setClave(null)} />
 
       <Modal open={nuevo} onClose={() => setNuevo(false)} title="Nuevo usuario" size="sm">
         <form

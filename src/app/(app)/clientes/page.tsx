@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { Building2, CalendarPlus, Pencil, Plus, RefreshCw, UserPlus } from "lucide-react";
+import { Building2, CalendarPlus, KeyRound, Pencil, Plus, RefreshCw, UserPlus } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { adminActualizarComercio, adminComercios, adminCrearComercio, adminInvitar, crearCuenta } from "@/lib/db";
 import { errMsg } from "@/lib/supabase";
 import { fechaHora, isoDate, money, number } from "@/lib/format";
 import type { ComercioAdmin, Plan } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
+import { CambiarClaveModal } from "@/components/CambiarClaveModal";
 
 const hoyAR = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
 const sumarDias = (iso: string, dias: number) => {
@@ -320,6 +321,7 @@ function EditarClienteModal({
 }) {
   const [f, setF] = useState<ComercioAdmin | null>(comercio);
   const [admin, setAdmin] = useState({ nombre: "", email: "", pass: "" });
+  const [claveDueno, setClaveDueno] = useState(false);
   const [guardando, setGuardando] = useState(false);
   useEffect(() => {
     setF(comercio);
@@ -384,6 +386,18 @@ function EditarClienteModal({
             Guardar cambios
           </button>
         </form>
+
+        {f.dueno && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 p-3 text-sm">
+            <span>
+              Dueño: <b>{f.dueno}</b>
+            </span>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setClaveDueno(true)}>
+              <KeyRound size={14} /> Cambiar su contraseña
+            </button>
+          </div>
+        )}
+        <CambiarClaveModal email={claveDueno ? f.dueno : null} nombre={f.nombre} propia={false} onClose={() => setClaveDueno(false)} />
 
         <div className="rounded-lg border border-slate-200 p-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold">

@@ -24,9 +24,11 @@ import {
   Clock,
   Lock,
   Building2,
+  KeyRound,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Loading } from "./ui";
+import { CambiarClaveModal } from "./CambiarClaveModal";
 import type { Modulo } from "@/lib/types";
 
 const NAV: { href: string; label: string; icon: typeof Store; modulo?: Modulo; admin?: boolean; superadmin?: boolean }[] = [
@@ -63,6 +65,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const path = usePathname();
   const [abierto, setAbierto] = useState(false);
+  const [miClave, setMiClave] = useState(false);
 
   useEffect(() => {
     if (!cargando && !user) router.replace("/login");
@@ -185,7 +188,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="border-t border-slate-800 p-4">
         <div className="truncate text-sm font-medium text-white">{modoAdmin ? user.email : perfil!.nombre}</div>
         <div className="text-xs capitalize text-slate-400">{modoAdmin ? "Administrador general" : perfil!.rol}</div>
-        <button onClick={salir} className="mt-3 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
+        <button onClick={() => setMiClave(true)} className="mt-3 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
+          <KeyRound size={14} /> Cambiar mi contraseña
+        </button>
+        <button onClick={salir} className="mt-2 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
           <LogOut size={14} /> Cerrar sesión
         </button>
       </div>
@@ -214,6 +220,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {aviso}
         <main className={esPOS ? "flex-1 p-3 lg:p-4" : "flex-1 p-4 lg:p-8"}>{children}</main>
       </div>
+      <CambiarClaveModal email={miClave ? user.email ?? null : null} propia onClose={() => setMiClave(false)} />
     </div>
   );
 }
