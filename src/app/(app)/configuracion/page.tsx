@@ -8,7 +8,7 @@ import { useApp } from "@/context/AppContext";
 import { guardarConfig } from "@/lib/db";
 import { imprimirTicket } from "@/lib/ticket";
 import type { Config, MedioConfig, Venta } from "@/lib/types";
-import { comisionDe, conRecargo, mediosDe } from "@/lib/types";
+import { PLANTILLAS_MEDIOS, comisionDe, conRecargo, mediosDe } from "@/lib/types";
 import { money } from "@/lib/format";
 import { Field, NumInput, PageHeader } from "@/components/ui";
 import { ALICUOTAS, cuitValido } from "@/lib/arca/calculo";
@@ -326,7 +326,7 @@ function CertificadoArca() {
   );
 }
 
-/** Recargo/descuento al cliente y comisión del procesador por medio de pago, más alias para transferencias */
+/** Medios de cobro: recargo/descuento al cliente y comisión de cada procesador; alias para transferencias */
 function MediosPagoCard({
   medios,
   alias,
@@ -339,20 +339,42 @@ function MediosPagoCard({
   onAlias: (v: string) => void;
 }) {
   const filas = mediosDe({ medios_pago: medios });
-  const cambiar = (id: string, cambio: Partial<MedioConfig>) => {
-    const nuevas = filas.map((m) => (m.id === id ? { ...m, ...cambio } : m));
-    if (!nuevas.some((m) => m.activo)) return toast.error("Tiene que quedar al menos un medio de pago activo");
-    onMedios(nuevas.map(({ id, activo, recargo, comision }) => ({ id, activo, recargo, comision })));
+  const [otro, setOtro] = useState({ nombre: "", comision: 0 });
+
+  const guardar = (nuevas: MedioConfig[]) => {
+    if (!nuevas.some((m) => m.activo)) return toast.error("Tiene que quedar al menos un medio de cobro activo");
+    onMedios(nuevas.map(({ id, nombre, grupo, activo, recargo, comision }) => ({ id, nombre, grupo, activo, recargo, comision })));
   };
-  const transferencia = filas.find((m) => m.id === "transferencia");
+  const cambiar = (id: string, cambio: Partial<MedioConfig>) => guardar(filas.map((m) => (m.id === id ? { ...m, ...cambio } : m)));
+  const quitar = (m: MedioConfig) => {
+    if (!confirm(`¿Quitar "${m.nombre}"? Las ventas viejas lo siguen mostrando.`)) return;
+    guardar(filas.filter((x) => x.id !== m.id));
+  };
+  const agregarPlantilla = (grupo: string) => {
+    const pl = PLANTILLAS_MEDIOS.find((p) => p.grupo === grupo)!;
+    const nuevos = pl.medios
+      .filter((m) => !filas.some((f) => f.id === m.id))
+      .map((m) => ({ id: m.id, nombre: `${grupo} · ${m.tipo}`, grupo, activo: true, recargo: 0, comision: m.comision }));
+    if (!nuevos.length) return toast("Ya está agregado");
+    guardar([...filas, ...nuevos]);
+    toast.success(`${grupo}: revisá que las comisiones coincidan con tu cuenta y guardá`);
+  };
+  const agregarOtro = () => {
+    const nombre = otro.nombre.trim();
+    if (!nombre) return toast.error("Poné un nombre (ej: Posnet Payway · Crédito)");
+    const id = "m_" + nombre.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30) + "_" + Date.now().toString(36).slice(-4);
+    guardar([...filas, { id, nombre, activo: true, recargo: 0, comision: otro.comision }]);
+    setOtro({ nombre: "", comision: 0 });
+  };
+  const transferencia = filas.find((m) => m.id === "transferencia" && m.activo);
 
   return (
     <div className="card p-5">
-      <h3 className="font-semibold">Medios de pago</h3>
+      <h3 className="font-semibold">Medios de cobro</h3>
       <p className="mb-3 text-xs text-slate-500">
-        <b>Recargo</b>: lo que le sumás al cliente por pagar con ese medio (negativo = descuento, ej. −5 en efectivo). <b>Comisión</b>: lo que te retiene el procesador
-        (Mercado Pago, posnet), sin IVA. Revisá tus condiciones reales en el panel de cada uno. Con esto la caja cobra el monto correcto y los reportes muestran tu
-        ganancia real.
+        <b>Recargo</b>: lo que le sumás al cliente por pagar con ese medio (negativo = descuento, ej. −5 en efectivo). <b>Comisión</b>: lo que te retiene el procesador,
+        sin IVA. Cada procesador cobra distinto según el cliente pague con dinero en cuenta, débito o crédito: agregalos por separado. Los valores de las plantillas son
+        de referencia; verificá los de tu cuenta.
       </p>
       <div className="overflow-x-auto">
         <table className="table">
@@ -360,10 +382,11 @@ function MediosPagoCard({
             <tr>
               <th>Medio</th>
               <th className="text-center">Activo</th>
-              <th className="w-32">Recargo / desc. %</th>
-              <th className="w-32">Comisión % (sin IVA)</th>
+              <th className="w-28">Recargo %</th>
+              <th className="w-28">Comisión % s/IVA</th>
               <th className="text-right">Con IVA</th>
               <th className="text-right">De $1.000 te quedan</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -373,7 +396,13 @@ function MediosPagoCard({
               const tono = neto >= 1000 ? "text-emerald-600" : neto >= 970 ? "text-amber-600" : "text-rose-600";
               return (
                 <tr key={m.id} className={m.activo ? "" : "opacity-50"}>
-                  <td className="font-medium">{m.label}</td>
+                  <td className="min-w-[12rem]">
+                    {m.id === "efectivo" ? (
+                      <span className="font-medium">{m.nombre}</span>
+                    ) : (
+                      <input className="input py-1" value={m.nombre} onChange={(e) => cambiar(m.id, { nombre: e.target.value })} />
+                    )}
+                  </td>
                   <td className="text-center">
                     <input type="checkbox" checked={m.activo} onChange={(e) => cambiar(m.id, { activo: e.target.checked })} />
                   </td>
@@ -385,16 +414,38 @@ function MediosPagoCard({
                   </td>
                   <td className="text-right tabular-nums text-slate-500">{(m.comision * 1.21).toFixed(2).replace(".", ",")} %</td>
                   <td className={`text-right font-semibold tabular-nums ${tono}`}>{money(neto)}</td>
+                  <td>
+                    {m.id !== "efectivo" && (
+                      <button className="p-1 text-slate-400 hover:text-rose-600" title="Quitar" onClick={() => quitar(m)}>
+                        <X size={16} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-slate-500">
-        Verde: el recargo cubre la comisión. Ámbar: perdés hasta 3 %. Rojo: perdés más. La comisión se calcula con IVA (21 %).
-      </p>
-      {transferencia?.activo && (
+      <p className="mt-2 text-xs text-slate-500">Verde: el recargo cubre la comisión. Ámbar: perdés hasta 3 %. Rojo: perdés más. La comisión se calcula con IVA (21 %).</p>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-slate-600">Agregar procesador:</span>
+        {PLANTILLAS_MEDIOS.map((p) => (
+          <button key={p.grupo} type="button" className="btn-ghost btn-sm" onClick={() => agregarPlantilla(p.grupo)}>
+            + {p.grupo}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <input className="input max-w-xs py-1" placeholder="Otro medio (ej: Posnet Payway · Crédito)" value={otro.nombre} onChange={(e) => setOtro({ ...otro, nombre: e.target.value })} />
+        <NumInput className="input w-28 py-1 text-right" placeholder="Comisión %" value={otro.comision} onChange={(n) => setOtro({ ...otro, comision: n })} />
+        <button type="button" className="btn-ghost btn-sm" onClick={agregarOtro}>
+          + Agregar
+        </button>
+      </div>
+
+      {transferencia && (
         <Field label="Alias / CBU para transferencias (se muestra al cobrar)" className="mt-4 max-w-md">
           <input className="input" value={alias} onChange={(e) => onAlias(e.target.value)} placeholder="ej: kiosco.la.esquina" />
         </Field>

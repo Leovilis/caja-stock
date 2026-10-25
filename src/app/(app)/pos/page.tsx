@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { abrirCaja, registrarVenta, type ItemCarrito } from "@/lib/db";
 import { money, round2, number } from "@/lib/format";
 import { imprimirTicket } from "@/lib/ticket";
-import { MEDIOS_PAGO, MedioPago, Pago, Producto, Venta, facturacionConfigurada, comisionDe, conRecargo, mediosDe, type MedioConfig } from "@/lib/types";
+import { Pago, Producto, Venta, facturacionConfigurada, comisionDe, conRecargo, mediosDe, nombreCorto, type MedioConfig } from "@/lib/types";
 import { FacturarModal } from "@/components/FacturarModal";
 
 interface CarritoItem extends ItemCarrito {
@@ -481,18 +481,18 @@ function CobroModal({
   open: boolean;
   total: number; // total del ticket (antes del recargo por medio de pago)
   costo: number; // costo de la mercadería del ticket (para avisar si queda a pérdida)
-  medios: (MedioConfig & { label: string })[];
+  medios: MedioConfig[];
   alias: string;
   onClose: () => void;
   onConfirm: (pagos: Pago[], recibido: number, vuelto: number) => Promise<void>;
 }) {
   const activos = medios.filter((m) => m.activo);
   const inicial = (activos.find((m) => m.id === "efectivo") ?? activos[0])?.id ?? "efectivo";
-  const vacio = () => Object.fromEntries(MEDIOS_PAGO.map((m) => [m.id, 0])) as Record<MedioPago, number>;
-  const [medio, setMedio] = useState<MedioPago>(inicial);
+  const vacio = () => Object.fromEntries(medios.map((m) => [m.id, 0])) as Record<string, number>;
+  const [medio, setMedio] = useState<string>(inicial);
   const [recibido, setRecibido] = useState(0);
   const [dividido, setDividido] = useState(false);
-  const [pagos, setPagos] = useState<Record<MedioPago, number>>(vacio);
+  const [pagos, setPagos] = useState<Record<string, number>>(vacio);
   const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
@@ -505,10 +505,10 @@ function CobroModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const cfg = (id: MedioPago) => medios.find((m) => m.id === id);
+  const cfg = (id: string) => medios.find((m) => m.id === id);
   // partes del ticket que paga cada medio (sin recargo) y lo que efectivamente se cobra con cada uno
-  const partes: [MedioPago, number][] = dividido
-    ? (Object.entries(pagos) as [MedioPago, number][]).filter(([, v]) => v > 0)
+  const partes: [string, number][] = dividido
+    ? Object.entries(pagos).filter(([, v]) => v > 0)
     : [[medio, total]];
   const cobrados = partes.map(([m, base]) => ({ m, base, cobrado: conRecargo(base, cfg(m)) }));
   const aCobrar = round2(cobrados.reduce((a, c) => a + c.cobrado, 0));
@@ -538,6 +538,21 @@ function CobroModal({
   }
 
   const etiquetaRecargo = (m: MedioConfig) => (m.recargo ? `${m.recargo > 0 ? "+" : "−"}${Math.abs(m.recargo)}%` : "");
+  // botones: los medios sueltos arriba y cada procesador en su fila (Dinero en cuenta / Débito / Crédito)
+  const sueltos = activos.filter((m) => !m.grupo);
+  const grupos = [...new Set(activos.filter((m) => m.grupo).map((m) => m.grupo!))];
+  const boton = (m: MedioConfig, texto: string) => (
+    <button
+      key={m.id}
+      onClick={() => setMedio(m.id)}
+      className={`rounded-lg border px-2 py-3 text-xs font-medium transition ${
+        medio === m.id ? "border-brand-600 bg-brand-50 text-brand-700" : "border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      {texto}
+      {m.recargo !== 0 && <div className={m.recargo > 0 ? "text-rose-600" : "text-emerald-600"}>{etiquetaRecargo(m)}</div>}
+    </button>
+  );
   const billetes = [1000, 2000, 5000, 10000, 20000].filter((b) => b >= aCobrar * 0.2);
 
   return (
@@ -569,20 +584,13 @@ function CobroModal({
 
         {!dividido ? (
           <>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-              {activos.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => setMedio(m.id)}
-                  className={`rounded-lg border px-2 py-3 text-xs font-medium transition ${
-                    medio === m.id ? "border-brand-600 bg-brand-50 text-brand-700" : "border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  {m.label}
-                  {m.recargo !== 0 && <div className={m.recargo > 0 ? "text-rose-600" : "text-emerald-600"}>{etiquetaRecargo(m)}</div>}
-                </button>
-              ))}
-            </div>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">{sueltos.map((m) => boton(m, m.nombre))}</div>
+            {grupos.map((g) => (
+              <div key={g} className="mt-2">
+                <div className="mb-1 text-xs font-semibold text-slate-500">{g}</div>
+                <div className="grid grid-cols-3 gap-2">{activos.filter((m) => m.grupo === g).map((m) => boton(m, nombreCorto(m)))}</div>
+              </div>
+            ))}
             {medio === "efectivo" && (
               <div className="mt-4 space-y-2">
                 <Field label="Paga con">
@@ -606,13 +614,13 @@ function CobroModal({
             <p className="text-xs text-slate-500">Cargá qué parte del ticket paga cada medio; el recargo se suma solo.</p>
             {activos.map((m) => (
               <div key={m.id} className="flex items-center gap-2">
-                <span className="w-36 text-sm">
-                  {m.label} {m.recargo !== 0 && <span className="text-xs text-slate-500">{etiquetaRecargo(m)}</span>}
+                <span className="w-44 text-sm">
+                  {m.nombre} {m.recargo !== 0 && <span className="text-xs text-slate-500">{etiquetaRecargo(m)}</span>}
                 </span>
-                <NumInput value={pagos[m.id]} placeholder="0" onChange={(n) => setPagos((p) => ({ ...p, [m.id]: n }))} />
+                <NumInput value={pagos[m.id] ?? 0} placeholder="0" onChange={(n) => setPagos((p) => ({ ...p, [m.id]: n }))} />
                 <button
                   className="btn-ghost btn-sm whitespace-nowrap"
-                  onClick={() => setPagos((p) => ({ ...p, [m.id]: round2(p[m.id] + Math.max(0, total - sumaDiv)) }))}
+                  onClick={() => setPagos((p) => ({ ...p, [m.id]: round2((p[m.id] ?? 0) + Math.max(0, total - sumaDiv)) }))}
                 >
                   Resto
                 </button>
@@ -624,7 +632,7 @@ function CobroModal({
             <div className={`text-right text-sm font-medium ${falta === 0 ? "text-emerald-600" : "text-rose-600"}`}>
               {falta > 0 ? `Falta ${money(falta)}` : falta < 0 ? `Sobra ${money(-falta)}` : "Completo"}
             </div>
-            {pagos.efectivo > 0 && (
+            {(pagos.efectivo ?? 0) > 0 && (
               <Field label="Efectivo entregado por el cliente">
                 <NumInput value={recibido} onChange={setRecibido} placeholder={String(efectivoAplicado)} />
               </Field>

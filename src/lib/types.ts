@@ -30,6 +30,7 @@ export interface Producto {
   precio_desde?: string; // desde cuándo rige el precio (cenefas)
 }
 
+/** Medios básicos (también los que usa el negocio para pagar gastos y compras) */
 export type MedioPago = "efectivo" | "debito" | "credito" | "transferencia" | "qr";
 
 export const MEDIOS_PAGO: { id: MedioPago; label: string }[] = [
@@ -40,8 +41,14 @@ export const MEDIOS_PAGO: { id: MedioPago; label: string }[] = [
   { id: "qr", label: "QR / Mercado Pago" },
 ];
 
+// Nombres de los medios configurados por el comercio (los registra AppContext al cargar la configuración)
+let nombresMedios: Record<string, string> = {};
+export function registrarMedios(lista: { id: string; nombre: string }[]) {
+  nombresMedios = Object.fromEntries(lista.map((m) => [m.id, m.nombre]));
+}
+
 export const medioLabel = (m: string) =>
-  m === "cuenta_corriente" ? "Cuenta corriente" : (MEDIOS_PAGO.find((x) => x.id === m)?.label ?? m);
+  m === "cuenta_corriente" ? "Cuenta corriente" : (nombresMedios[m] ?? MEDIOS_PAGO.find((x) => x.id === m)?.label ?? m);
 
 export interface VentaItem {
   id?: number;
@@ -57,26 +64,76 @@ export interface VentaItem {
 }
 
 export interface Pago {
-  medio: MedioPago;
+  medio: string; // id del medio configurado (ej: "efectivo", "qr_mp_credito")
   monto: number; // lo cobrado con ese medio (incluye su recargo)
   recargo?: number;
+  nombre?: string; // nombre del medio al momento de la venta
 }
 
-/** Configuración de un medio de pago del comercio */
+/** Medio de cobro configurado por el comercio */
 export interface MedioConfig {
-  id: MedioPago;
+  id: string;
+  nombre: string;
+  grupo?: string; // procesador (ej: "QR Mercado Pago"): en la caja se muestran juntos
   activo: boolean;
   recargo: number; // % que se le suma al cliente (negativo = descuento)
   comision: number; // % sin IVA que retiene el procesador
 }
 
-/** Los 5 medios en orden, con lo configurado (o los valores por defecto) */
-export function mediosDe(cfg: { medios_pago?: Partial<MedioConfig>[] }): (MedioConfig & { label: string })[] {
-  return MEDIOS_PAGO.map((m) => {
-    const c = (cfg.medios_pago ?? []).find((x) => x.id === m.id) ?? {};
-    return { id: m.id, label: m.label, activo: c.activo ?? true, recargo: Number(c.recargo ?? 0), comision: Number(c.comision ?? 0) };
+const BASICOS: MedioConfig[] = MEDIOS_PAGO.map((m) => ({ id: m.id, nombre: m.label, activo: true, recargo: 0, comision: 0 }));
+
+/**
+ * Medios del comercio. Sin configuración: los 5 básicos.
+ * Efectivo siempre existe y va primero (la caja cuenta el efectivo por ese id).
+ */
+export function mediosDe(cfg: { medios_pago?: Partial<MedioConfig>[] }): MedioConfig[] {
+  const guardados = (cfg.medios_pago ?? []).filter((m) => m.id);
+  const base = guardados.length ? guardados : BASICOS;
+  const lista = base.map((c) => {
+    const def = MEDIOS_PAGO.find((x) => x.id === c.id);
+    return {
+      id: String(c.id),
+      nombre: (c.nombre || def?.label || String(c.id)).trim(),
+      grupo: c.grupo || undefined,
+      activo: c.activo ?? true,
+      recargo: Number(c.recargo ?? 0),
+      comision: Number(c.comision ?? 0),
+    };
   });
+  const efectivo = lista.find((m) => m.id === "efectivo") ?? BASICOS[0];
+  return [efectivo, ...lista.filter((m) => m.id !== "efectivo")];
 }
+
+/** "QR Mercado Pago · Crédito" con grupo "QR Mercado Pago" → "Crédito" */
+export const nombreCorto = (m: MedioConfig) =>
+  m.grupo && m.nombre.startsWith(m.grupo) ? m.nombre.slice(m.grupo.length).replace(/^\s*[·\-–:]\s*/, "") || m.nombre : m.nombre;
+
+/** Plantillas de procesadores (valores de referencia: verificá los de tu cuenta) */
+export const PLANTILLAS_MEDIOS: { grupo: string; medios: { id: string; tipo: string; comision: number }[] }[] = [
+  {
+    grupo: "QR Naranja X",
+    medios: [
+      { id: "qr_naranja_cuenta", tipo: "Dinero en cuenta", comision: 0.8 },
+      { id: "qr_naranja_debito", tipo: "Débito", comision: 1.2 },
+      { id: "qr_naranja_credito", tipo: "Crédito", comision: 4.5 },
+    ],
+  },
+  {
+    grupo: "QR Mercado Pago",
+    medios: [
+      { id: "qr_mp_cuenta", tipo: "Dinero en cuenta", comision: 0.8 },
+      { id: "qr_mp_debito", tipo: "Débito", comision: 1.35 },
+      { id: "qr_mp_credito", tipo: "Crédito", comision: 5.99 },
+    ],
+  },
+  {
+    grupo: "Point Mercado Pago",
+    medios: [
+      { id: "point_mp_debito", tipo: "Débito", comision: 2.99 },
+      { id: "point_mp_credito", tipo: "Crédito", comision: 5.99 },
+    ],
+  },
+];
 
 /** Lo que se le cobra al cliente por pagar `base` con ese medio */
 export const conRecargo = (base: number, m?: Pick<MedioConfig, "recargo">) => Math.round(base * (1 + (m?.recargo ?? 0) / 100) * 100) / 100;

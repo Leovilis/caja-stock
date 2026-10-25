@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState, ReactNode 
 import type { User } from "@supabase/supabase-js";
 import { supabase, errorConfig } from "@/lib/supabase";
 import type { Caja, Config, Licencia, Modulo, Perfil } from "@/lib/types";
-import { CONFIG_DEFAULT, LICENCIA_DEFAULT, diasLicencia, moduloHabilitado } from "@/lib/types";
+import { CONFIG_DEFAULT, LICENCIA_DEFAULT, diasLicencia, mediosDe, moduloHabilitado, registrarMedios } from "@/lib/types";
 
 interface AppState {
   user: User | null;
@@ -115,6 +115,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(ch);
     };
   }, [activo, comercioId]);
+
+  // nombres de los medios de cobro del comercio para tickets, reportes y caja
+  useEffect(() => registrarMedios(mediosDe(config)), [config]);
 
   const diasRestantes = diasLicencia(licencia);
   const value: AppState = {

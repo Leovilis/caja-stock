@@ -53,7 +53,7 @@ export function imprimirTicket(v: Venta, cfg: Config) {
       <tr><td>&nbsp;${number(i.cantidad)} x ${money(i.precio)}</td><td class="r">${money(i.subtotal)}</td></tr>`
     )
     .join("");
-  const pagos = v.pagos.map((p) => `<tr><td>${medioLabel(p.medio)}</td><td class="r">${money(p.monto)}</td></tr>`).join("");
+  const pagos = v.pagos.map((p) => `<tr><td>${escapeHtml(p.nombre ?? medioLabel(p.medio))}</td><td class="r">${money(p.monto)}</td></tr>`).join("");
   imprimirHTML(
     `${encabezado(cfg)}
     <div>Ticket N° ${String(v.numero).padStart(8, "0")}</div>

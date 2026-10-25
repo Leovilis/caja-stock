@@ -233,8 +233,9 @@ create table if not exists vencimientos (
 );
 alter table config add column if not exists dias_aviso_vencimiento int not null default 7;
 
--- Medios de pago: [{id, activo, recargo (% al cliente, negativo = descuento), comision (% sin IVA que cobra el procesador)}]
--- vacío = todos activos, sin recargo ni comisión
+-- Medios de cobro: [{id, nombre, grupo, activo, recargo (% al cliente, negativo = descuento), comision (% sin IVA del procesador)}]
+-- vacío = los 5 básicos (efectivo, débito, crédito, transferencia, QR), activos, sin recargo ni comisión.
+-- Se pueden agregar más (ej: "QR Mercado Pago · Crédito"); "efectivo" siempre existe (la caja cuenta el efectivo por ese id).
 alter table config add column if not exists medios_pago jsonb not null default '[]';
 alter table config add column if not exists alias_transferencia text not null default '';
 alter table ventas add column if not exists recargo  numeric(14,2) not null default 0;  -- recargo/descuento por medio de pago (incluido en total)
@@ -732,6 +733,7 @@ begin
   --     p_pagos trae la parte del ticket que paga cada medio; se guarda lo efectivamente cobrado.
   for r in
     select x->>'medio' as medio, round((x->>'monto')::numeric, 2) as base,
+           (mm.m is not null) as existe, mm.m->>'nombre' as nombre,
            coalesce((m->>'activo')::boolean, true) as activo,
            coalesce((m->>'recargo')::numeric, 0) as recargo,
            coalesce((m->>'comision')::numeric, 0) as comision
@@ -739,13 +741,17 @@ begin
     left join lateral (select m from jsonb_array_elements(coalesce(cfg.medios_pago, '[]')) m where m->>'id' = x->>'medio' limit 1) mm on true
     where (x->>'monto')::numeric > 0
   loop
-    if r.medio not in ('efectivo', 'debito', 'credito', 'transferencia', 'qr') then raise exception 'Medio de pago inválido'; end if;
-    if not r.activo then raise exception 'El medio de pago "%" está desactivado', r.medio; end if;
+    if not r.existe and r.medio not in ('efectivo', 'debito', 'credito', 'transferencia', 'qr') then
+      raise exception 'Medio de pago inválido: %', r.medio;
+    end if;
+    if not r.activo then raise exception 'El medio de pago "%" está desactivado', coalesce(r.nombre, r.medio); end if;
     v_rec := round(r.base * r.recargo / 100, 2);
     v_cobrado := r.base + v_rec;
     v_recargo := v_recargo + v_rec;
     v_comision := v_comision + round(v_cobrado * r.comision * 1.21 / 100, 2);   -- comisión + IVA 21 %
-    v_pagos := v_pagos || jsonb_build_object('medio', r.medio, 'monto', v_cobrado, 'recargo', v_rec);
+    v_pagos := v_pagos || jsonb_build_array(
+      jsonb_build_object('medio', r.medio, 'monto', v_cobrado, 'recargo', v_rec)
+      || case when r.nombre is not null then jsonb_build_object('nombre', r.nombre) else '{}'::jsonb end);
   end loop;
 
   -- 2) Registra la venta con el próximo número de ticket DEL COMERCIO (el UPDATE bloquea la fila: sin saltos ni repetidos)

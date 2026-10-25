@@ -16,7 +16,7 @@ import { FacturarModal } from "@/components/FacturarModal";
 import { FiltroFacturaSelector, useFiltroFactura } from "@/components/FiltroFactura";
 import { pasaFiltro, ventaConFactura } from "@/lib/fiscal";
 import type { Comprobante, Venta } from "@/lib/types";
-import { MEDIOS_PAGO, medioLabel } from "@/lib/types";
+import { medioLabel, mediosDe } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
 
 export default function VentasPage() {
@@ -138,9 +138,9 @@ export default function VentasPage() {
           <input className="input max-w-xs" placeholder="N° de ticket o producto…" value={buscar} onChange={(e) => setBuscar(e.target.value)} />
           <select className="input w-auto" value={medio} onChange={(e) => setMedio(e.target.value)}>
             <option value="">Todos los medios</option>
-            {MEDIOS_PAGO.map((m) => (
+            {mediosDe(config).map((m) => (
               <option key={m.id} value={m.id}>
-                {m.label}
+                {m.nombre}
               </option>
             ))}
           </select>
@@ -175,7 +175,7 @@ export default function VentasPage() {
                   </td>
                   <td className="whitespace-nowrap text-xs">{fechaHora(v.fecha)}</td>
                   <td className="max-w-xs truncate text-sm">{v.venta_items.map((i) => `${number(i.cantidad)}× ${i.nombre}`).join(", ")}</td>
-                  <td className="text-xs">{v.pagos.map((p) => medioLabel(p.medio)).join(" + ")}</td>
+                  <td className="text-xs">{v.pagos.map((p) => p.nombre ?? medioLabel(p.medio)).join(" + ")}</td>
                   <td className="text-xs">{v.usuario_nombre}</td>
                   <td className="text-right font-semibold tabular-nums">{money(v.total)}</td>
                   <td className="whitespace-nowrap no-underline">
@@ -227,7 +227,7 @@ export default function VentasPage() {
                 </tr>
                 {detalle.pagos.map((p, k) => (
                   <tr key={"p" + k} className="text-sm text-slate-500">
-                    <td>{medioLabel(p.medio)}</td>
+                    <td>{p.nombre ?? medioLabel(p.medio)}</td>
                     <td className="text-right">{money(p.monto)}</td>
                   </tr>
                 ))}
