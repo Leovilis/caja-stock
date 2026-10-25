@@ -101,6 +101,13 @@ export async function actualizarProducto(id: string, data: Partial<Producto>) {
 /** 'eliminado' si no tenía historia; 'desactivado' si ya tuvo ventas/compras/ajustes */
 export const eliminarProducto = (id: string) => rpc<"eliminado" | "desactivado">("eliminar_producto", { p_producto: id });
 
+/* VENCIMIENTOS ------------------------------------------------------- */
+export const registrarVencimiento = (productoId: string, vence: string, cantidad: number, nota: string) =>
+  rpc<string>("registrar_vencimiento", { p_producto: productoId, p_vence: vence, p_cantidad: cantidad, p_nota: nota });
+/** vendido = ya no queda · retirar = se descarta (descuenta stock como "vencido") · borrar = se cargó mal */
+export const resolverVencimiento = (id: string, accion: "vendido" | "retirar" | "borrar") =>
+  rpc<void>("resolver_vencimiento", { p_id: id, p_accion: accion });
+
 export const moverStock = (productoId: string, tipo: "ajuste" | "compra" | "merma" | "vencido", valor: number, motivo: string) =>
   rpc<number>("mover_stock", { p_producto: productoId, p_tipo: tipo, p_valor: valor, p_motivo: motivo });
 
@@ -127,7 +134,7 @@ export interface NuevaCompra {
   pagado_desde_caja: boolean;
   actualizar_costo: boolean;
   mantener_margen: boolean;
-  items: { producto_id: string; cantidad: number; costo: number }[];
+  items: { producto_id: string; cantidad: number; costo: number; vence?: string }[];
   fac_tipo: TipoFacturaCompra;
   fac_iva: number;
 }

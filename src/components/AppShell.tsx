@@ -29,6 +29,7 @@ import {
 import { useApp } from "@/context/AppContext";
 import { Loading } from "./ui";
 import { CambiarClaveModal } from "./CambiarClaveModal";
+import { useVencimientos } from "@/hooks/useVencimientos";
 import type { Modulo } from "@/lib/types";
 
 const NAV: { href: string; label: string; icon: typeof Store; modulo?: Modulo; admin?: boolean; superadmin?: boolean }[] = [
@@ -66,6 +67,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const [abierto, setAbierto] = useState(false);
   const [miClave, setMiClave] = useState(false);
+  // Vencimientos para revisar (contador en el menú "Stock")
+  const { alertas: alertasVenc } = useVencimientos(!!perfil?.activo && esAdmin && modulo("stock"));
 
   useEffect(() => {
     if (!cargando && !user) router.replace("/login");
@@ -181,6 +184,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <Icon size={18} />
               {label}
+              {href === "/stock" && alertasVenc > 0 && (
+                <span className="ml-auto rounded-full bg-rose-500 px-1.5 text-[10px] font-semibold text-white" title="Vencimientos para revisar">
+                  {alertasVenc}
+                </span>
+              )}
             </Link>
           );
         })}

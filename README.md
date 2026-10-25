@@ -11,8 +11,8 @@ Webapp de punto de venta para kiosco/drugstore: **ventas en tiempo real con lect
 | **Punto de venta** (`/pos`) | Escaneo de código (también `6*código` para cantidad), búsqueda por nombre, favoritos, ítem "Varios" sin código, descuento % o $, cobro con efectivo/débito/crédito/transferencia/QR, **pago dividido**, vuelto con billetes rápidos, ticket térmico 58/80 mm. Atajos: F2 buscar · F4 varios · F8 descuento · F12 cobrar. El carrito sobrevive a un F5. | Todos |
 | **Caja** (`/caja`) | Apertura con fondo inicial, ingresos/retiros de efectivo, pagos desde caja (opcionalmente como gasto), resumen en vivo por medio de pago, **cierre con conteo de billetes**, faltante/sobrante, impresión del cierre e historial. | Todos (historial: admin) |
 | **Ventas** (`/ventas`) | Historial por fechas, detalle, reimpresión, **anulación con devolución de stock**, exportación CSV. | Vendedor: sólo hoy |
-| **Productos** | ABM con costo → margen → precio (redondeo a $10), código interno para productos sin EAN, favoritos, **aumento masivo de precios por %** (por categoría, con redondeo), importar/exportar CSV, stock valorizado. | Admin edita, vendedor consulta |
-| **Stock** | Lista de reposición por proveedor con cantidad sugerida (exportable como pedido), ajustes por inventario/rotura/vencido, historial de movimientos, pérdidas del período. | Admin |
+| **Productos** | ABM con costo → margen → precio (redondeo a $10), código interno para productos sin EAN, favoritos, **aumento masivo de precios por %** (por categoría, con redondeo), **cenefas** para la góndola en A4 (todas, por categoría, favoritos o sólo los precios cambiados desde una fecha), importar/exportar CSV, stock valorizado. | Admin edita, vendedor consulta |
+| **Stock** | **Vencimientos** (cargados al ingresar mercadería o a mano; aviso N días antes, contador en el menú y en Inicio; "se vendió" o "retirar" que descuenta como vencido), lista de reposición por proveedor con cantidad sugerida (exportable como pedido), ajustes por inventario/rotura/vencido, historial de movimientos, pérdidas del período. | Admin |
 | **Compras** | Ingreso de mercadería: suma stock, actualiza costo y opcionalmente **mantiene el margen** ajustando el precio; pago desde caja o a cuenta corriente. Se indica si vino **con factura (A/B/C) o sin factura**, con número e IVA; se puede completar después. | Admin |
 | **Proveedores** | Contacto, WhatsApp directo, días de visita, productos asociados. | Admin |
 | **Gastos** | Gastos operativos por categoría (alquiler, luz, sueldos, impuestos, comisiones MP…), CSV. | Admin |
@@ -91,6 +91,7 @@ movimientos_caja   caja_id, tipo (ingreso|egreso), monto, concepto
 movimientos_stock  producto_id, tipo (venta|compra|ajuste|merma|vencido|anulacion|alta), cantidad, stock_anterior, stock_nuevo
 compras            proveedor, items (jsonb), total, medio, pagado_desde_caja
 gastos             fecha, categoria, descripcion, monto, medio, caja_id
+vencimientos       producto_id, vence, cantidad, estado (pendiente|vendido|retirado), nota
 proveedores        nombre, contacto, telefono, email, cuit, dias_visita
 comprobantes       facturas y notas de crédito ARCA (CAE)
 ```

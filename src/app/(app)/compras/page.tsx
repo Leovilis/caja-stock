@@ -225,7 +225,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
       await registrarCompra({
         proveedor_id: prov.id,
         comprobante,
-        items: items.filter((i) => i.cantidad > 0).map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, costo: i.costo })),
+        items: items.filter((i) => i.cantidad > 0).map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad, costo: i.costo, vence: i.vence })),
         medio,
         pagado_desde_caja: puedeCaja && desdeCaja,
         actualizar_costo: actCosto,
@@ -320,6 +320,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
                 <th>Producto</th>
                 <th className="w-28">Cantidad</th>
                 <th className="w-36">Costo unitario</th>
+                <th className="w-40">Vence (opcional)</th>
                 <th className="text-right">Subtotal</th>
                 <th></th>
               </tr>
@@ -333,6 +334,14 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
                   </td>
                   <td>
                     <NumInput className="input py-1" value={it.costo} onChange={(n) => upd(i, "costo", n)} />
+                  </td>
+                  <td>
+                    <input
+                      type="date"
+                      className="input py-1"
+                      value={it.vence ?? ""}
+                      onChange={(e) => setItems((x) => x.map((y, k) => (k === i ? { ...y, vence: e.target.value || undefined } : y)))}
+                    />
                   </td>
                   <td className="text-right tabular-nums">{money(it.subtotal)}</td>
                   <td>

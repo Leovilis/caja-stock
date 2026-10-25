@@ -218,6 +218,27 @@ create table if not exists gastos (
   creado          timestamptz not null default now()
 );
 
+-- Vencimientos: fecha de vencimiento de lo que entró (por compra o cargado a mano)
+create table if not exists vencimientos (
+  id              uuid primary key default gen_random_uuid(),
+  comercio_id     uuid,
+  producto_id     uuid not null references productos(id) on delete cascade,
+  vence           date not null,
+  cantidad        numeric(14,3) not null check (cantidad > 0),
+  estado          text not null default 'pendiente' check (estado in ('pendiente', 'vendido', 'retirado')),
+  nota            text not null default '',
+  usuario_nombre  text not null,
+  creado          timestamptz not null default now(),
+  resuelto        timestamptz
+);
+alter table config add column if not exists dias_aviso_vencimiento int not null default 7;
+
+-- Cenefas: desde cuándo rige el precio actual (para imprimir sólo las que cambiaron)
+alter table productos add column if not exists precio_desde timestamptz;
+update productos set precio_desde = coalesce(actualizado, creado, now()) where precio_desde is null;
+alter table productos alter column precio_desde set default now();
+alter table productos alter column precio_desde set not null;
+
 -- ---------------------------------------------------------------------
 -- FACTURACIÓN ELECTRÓNICA ARCA
 -- ---------------------------------------------------------------------
@@ -330,7 +351,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['perfiles','config','proveedores','productos','cajas','ventas','venta_items',
-                           'movimientos_caja','movimientos_stock','compras','gastos','comprobantes'] loop
+                           'movimientos_caja','movimientos_stock','compras','gastos','comprobantes','vencimientos'] loop
     execute format('alter table %I add column if not exists comercio_id uuid', t);
     if t not in ('perfiles', 'config') then
       execute format('alter table %I alter column comercio_id set default mi_comercio()', t);
@@ -352,6 +373,7 @@ create index if not exists ventas_fecha_idx2 on ventas (comercio_id, fecha desc)
 create index if not exists movimientos_stock_fecha_idx2 on movimientos_stock (comercio_id, fecha desc);
 create index if not exists compras_fecha_idx2 on compras (comercio_id, fecha desc);
 create index if not exists gastos_fecha_idx2 on gastos (comercio_id, fecha desc);
+create index if not exists vencimientos_pend_idx on vencimientos (comercio_id, estado, vence);
 
 -- ---------------------------------------------------------------------
 -- PLAN Y VENCIMIENTO (por comercio)
@@ -819,6 +841,55 @@ begin
   return 'eliminado';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- VENCIMIENTOS
+-- ---------------------------------------------------------------------
+create or replace function registrar_vencimiento(p_producto uuid, p_vence date, p_cantidad numeric, p_nota text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare u perfiles; v_id uuid;
+begin
+  u := _exigir_admin();
+  if not exists (select 1 from productos where id = p_producto and comercio_id = u.comercio_id) then
+    raise exception 'Producto inexistente';
+  end if;
+  if p_vence is null then raise exception 'Indicá la fecha de vencimiento'; end if;
+  if coalesce(p_cantidad, 0) <= 0 then raise exception 'Indicá la cantidad'; end if;
+  insert into vencimientos (producto_id, vence, cantidad, nota, usuario_nombre)
+  values (p_producto, p_vence, p_cantidad, coalesce(trim(p_nota), ''), u.nombre)
+  returning id into v_id;
+  return v_id;
+end $$;
+
+-- p_accion: 'vendido' (ya no queda: se vendió) | 'retirar' (se descarta: descuenta stock como "vencido")
+--           | 'borrar' (se cargó mal)
+create or replace function resolver_vencimiento(p_id uuid, p_accion text) returns void
+language plpgsql security definer set search_path = public as $$
+declare u perfiles; v vencimientos; p productos; v_cant numeric;
+begin
+  u := _exigir_admin();
+  select * into v from vencimientos where id = p_id and comercio_id = u.comercio_id for update;
+  if not found then raise exception 'Vencimiento inexistente'; end if;
+  if p_accion = 'borrar' then
+    delete from vencimientos where id = p_id;
+    return;
+  end if;
+  if v.estado <> 'pendiente' then raise exception 'Ese vencimiento ya estaba resuelto'; end if;
+  if p_accion = 'vendido' then
+    update vencimientos set estado = 'vendido', resuelto = now() where id = p_id;
+  elsif p_accion = 'retirar' then
+    select * into p from productos where id = v.producto_id and comercio_id = u.comercio_id for update;
+    v_cant := least(v.cantidad, greatest(p.stock, 0));   -- no deja el stock negativo
+    if v_cant > 0 then
+      update productos set stock = stock - v_cant, actualizado = now() where id = p.id;
+      insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario_nombre)
+      values (p.id, p.nombre, 'vencido', -v_cant, p.stock, p.stock - v_cant, 'Vencido el ' || to_char(v.vence, 'DD/MM/YYYY'), u.nombre);
+    end if;
+    update vencimientos set estado = 'retirado', resuelto = now() where id = p_id;
+  else
+    raise exception 'Acción inválida';
+  end if;
+end $$;
+
 -- Aumento/baja masiva por porcentaje. p_aplicar: 'precio' | 'costo' | 'ambos'
 create or replace function aumentar_precios(p_porcentaje numeric, p_categoria text, p_redondeo numeric, p_aplicar text) returns int
 language plpgsql security definer set search_path = public as $$
@@ -876,7 +947,7 @@ end $$;
 -- COMPRAS
 -- ---------------------------------------------------------------------
 -- p: {proveedor_id, comprobante, medio, pagado_desde_caja, actualizar_costo, mantener_margen,
---     fac_tipo ('sin_factura'|'A'|'B'|'C'), fac_iva, items:[{producto_id, cantidad, costo}]}
+--     fac_tipo ('sin_factura'|'A'|'B'|'C'), fac_iva, items:[{producto_id, cantidad, costo, vence?}]}
 create or replace function registrar_compra(p jsonb) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
@@ -917,6 +988,11 @@ begin
     insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, ref, usuario_nombre)
     values (pr.id, pr.nombre, 'compra', v_cant, v_nuevo - v_cant, v_nuevo,
             'Compra ' || prov.nombre || coalesce(' ' || nullif(p->>'comprobante', ''), ''), u.nombre);
+
+    if nullif(it->>'vence', '') is not null then
+      insert into vencimientos (producto_id, vence, cantidad, nota, usuario_nombre)
+      values (pr.id, (it->>'vence')::date, v_cant, 'Compra ' || prov.nombre || coalesce(' ' || nullif(p->>'comprobante', ''), ''), u.nombre);
+    end if;
 
     v_items := v_items || jsonb_build_object('producto_id', pr.id, 'nombre', pr.nombre, 'cantidad', v_cant,
                                              'costo', v_costo, 'subtotal', round(v_cant * v_costo, 2));
@@ -1071,7 +1147,8 @@ do $$
 declare t text;
 begin
   foreach t in array array['comercios','superadmins','invitaciones','perfiles','config','proveedores','productos','cajas',
-                           'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta'] loop
+                           'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta',
+                           'vencimientos'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;
@@ -1125,6 +1202,7 @@ create policy gastos_sel on gastos for select
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('gastos')));
 create policy gastos_del on gastos for delete
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and caja_id is null and (select modulo_habilitado('gastos')));
+create policy vencimientos_sel on vencimientos for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 create policy comprobantes_sel on comprobantes for select using (
   comercio_id = (select mi_comercio()) and exists (select 1 from ventas v where v.id = venta_id));
 
@@ -1141,6 +1219,18 @@ end $$;
 drop trigger if exists proteger_stock on productos;
 create trigger proteger_stock before update on productos for each row execute function _proteger_stock();
 
+-- Marca desde cuándo rige el precio (cenefas "precios cambiados desde…")
+create or replace function _marcar_precio() returns trigger
+language plpgsql as $$
+begin
+  if tg_op = 'INSERT' or new.precio is distinct from old.precio then
+    new.precio_desde := now();
+  end if;
+  return new;
+end $$;
+drop trigger if exists marcar_precio on productos;
+create trigger marcar_precio before insert or update of precio on productos for each row execute function _marcar_precio();
+
 -- ---------------------------------------------------------------------
 -- PERMISOS DE EJECUCIÓN
 -- ---------------------------------------------------------------------
@@ -1155,10 +1245,10 @@ do $$ begin
   end if;
 end $$;
 
-revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, mover_stock, aumentar_precios, importar_productos,
+revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave from public, anon;
-grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, mover_stock, aumentar_precios, importar_productos,
+grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave,
   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;
@@ -1171,7 +1261,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras',
-                           'movimientos_stock','proveedores','comprobantes','comercios'] loop
+                           'movimientos_stock','proveedores','comprobantes','comercios','vencimientos'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
     end if;

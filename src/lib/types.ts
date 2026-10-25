@@ -27,6 +27,7 @@ export interface Producto {
   alicuota_iva: number;
   creado?: string;
   actualizado?: string;
+  precio_desde?: string; // desde cuándo rige el precio (cenefas)
 }
 
 export type MedioPago = "efectivo" | "debito" | "credito" | "transferencia" | "qr";
@@ -165,6 +166,7 @@ export interface ItemCompra {
   cantidad: number;
   costo: number;
   subtotal: number;
+  vence?: string; // YYYY-MM-DD (opcional): crea un vencimiento
 }
 
 export interface Compra {
@@ -220,6 +222,7 @@ export interface Config {
   fiscal_punto_venta: number;
   fiscal_ambiente: "homologacion" | "produccion";
   alicuota_varios: number;
+  dias_aviso_vencimiento: number;
 }
 
 export const CONFIG_DEFAULT: Config = {
@@ -242,6 +245,7 @@ export const CONFIG_DEFAULT: Config = {
   fiscal_punto_venta: 1,
   fiscal_ambiente: "homologacion",
   alicuota_varios: 21,
+  dias_aviso_vencimiento: 7,
 };
 
 /** ¿Están cargados los datos mínimos para facturar? */
@@ -308,4 +312,26 @@ export function diasLicencia(l: Licencia): number | null {
   if (!l.vence) return null;
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
   return Math.round((Date.parse(l.vence) - Date.parse(hoy)) / 86_400_000);
+}
+
+// ---------------------------------------------------------------------
+// Vencimientos
+// ---------------------------------------------------------------------
+export interface Vencimiento {
+  id: string;
+  producto_id: string;
+  vence: string; // YYYY-MM-DD
+  cantidad: number;
+  estado: "pendiente" | "vendido" | "retirado";
+  nota: string;
+  usuario_nombre: string;
+  creado: string;
+  resuelto: string | null;
+  productos?: { nombre: string; codigo: string; stock: number } | null;
+}
+
+/** Días que faltan para el vencimiento (hora Argentina): 0 = vence hoy, negativo = vencido */
+export function diasParaVencer(vence: string): number {
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+  return Math.round((Date.parse(vence) - Date.parse(hoy)) / 86_400_000);
 }

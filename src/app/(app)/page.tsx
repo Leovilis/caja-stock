@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, ShoppingCart, TrendingUp, Wallet } from "lucide-react";
+import { AlertTriangle, ShoppingCart, TrendingUp, Wallet, CalendarClock } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { useVencimientos } from "@/hooks/useVencimientos";
+import { diasParaVencer } from "@/lib/types";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
 import { money, number, inicioDia, inicioMes, pct, isoDate } from "@/lib/format";
@@ -48,6 +50,8 @@ export default function Dashboard() {
   const gastosMes = totalGastos(gastos);
   const resultadoMes = r.mes.ganancia - gastosMes;
   const bajos = productos.filter((p) => p.stock <= p.stock_min);
+  const venc = useVencimientos();
+  const vencAlertas = [...venc.vencidos, ...venc.porVencer];
   const variacion = r.ayer.total > 0 ? ((r.hoy.total - r.ayer.total) / r.ayer.total) * 100 : null;
   const top = [...r.hoy.productos].sort((a, b) => b.cantidad - a.cantidad).slice(0, 8);
   const horas = r.hoy.porHora.map((v, h) => ({ h: `${h}h`, v })).filter((_, h) => h >= 7);
@@ -155,6 +159,27 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {vencAlertas.length > 0 && (
+        <div className="card mt-6 border-rose-200 bg-rose-50 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="flex items-center gap-2 font-semibold text-rose-800">
+              <CalendarClock size={18} /> {venc.vencidos.length > 0 && `${venc.vencidos.length} vencidos · `}
+              {venc.porVencer.length} por vencer en {venc.aviso} días
+            </h3>
+            <Link href="/stock" className="text-sm text-rose-800 underline">
+              Ver vencimientos
+            </Link>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {vencAlertas.slice(0, 15).map((v) => (
+              <span key={v.id} className={`badge ${diasParaVencer(v.vence) < 0 ? "bg-rose-200 text-rose-800" : "bg-white text-rose-800"}`}>
+                {v.productos?.nombre} · {v.vence.split("-").reverse().slice(0, 2).join("/")} ({number(v.cantidad)})
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {bajos.length > 0 && (
         <div className="card mt-6 border-amber-200 bg-amber-50 p-4">

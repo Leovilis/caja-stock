@@ -137,6 +137,9 @@ export default function ConfigPage() {
             <input type="checkbox" checked={f.permitir_stock_negativo} onChange={(e) => set("permitir_stock_negativo", e.target.checked)} />
             Permitir vender sin stock (el stock queda negativo)
           </label>
+          <Field label="Avisar vencimientos con (días de anticipación)">
+            <NumInput value={f.dias_aviso_vencimiento} onChange={(n) => set("dias_aviso_vencimiento", Math.max(0, Math.min(90, Math.round(n))))} />
+          </Field>
           <p className="text-xs text-slate-500 sm:col-span-2">
             Tip: en Chrome podés imprimir sin el cuadro de diálogo iniciando el navegador con <code>--kiosk-printing</code> y dejando la térmica como impresora predeterminada.
           </p>

@@ -9,6 +9,7 @@ import { descargarCSV } from "@/lib/csv";
 import type { MovimientoStock, Producto, Proveedor } from "@/lib/types";
 import { Badge, Empty, PageHeader, Stat } from "@/components/ui";
 import { AjusteStockModal } from "@/components/AjusteStockModal";
+import { VencimientosPanel } from "@/components/Vencimientos";
 
 const TIPOS: Record<string, { l: string; t: "slate" | "green" | "red" | "amber" | "blue" }> = {
   venta: { l: "Venta", t: "blue" },
@@ -61,13 +62,15 @@ export default function StockPage() {
 
   return (
     <div>
-      <PageHeader title="Stock" subtitle="Alertas de reposición, valorización y movimientos" />
+      <PageHeader title="Stock" subtitle="Vencimientos, alertas de reposición, valorización y movimientos" />
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Stock valorizado (costo)" value={money(valor)} />
         <Stat label="Stock a precio de venta" value={money(valorVenta)} tone="blue" />
         <Stat label="Para reponer" value={reponer.length} tone="amber" hint={`${sinStock} sin stock`} icon={<AlertTriangle size={16} />} />
         <Stat label="Pérdidas en el período" value={money(perdidas)} tone="red" hint="Roturas + vencidos al costo" />
       </div>
+
+      <VencimientosPanel productos={productos} />
 
       <div className="card mb-6 overflow-x-auto">
         <div className="flex items-center justify-between p-4">

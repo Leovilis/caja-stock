@@ -2,16 +2,17 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { Download, Edit, Plus, Star, TrendingUp, Upload, PackageMinus, Trash2 } from "lucide-react";
+import { Download, Edit, Plus, Star, TrendingUp, Upload, PackageMinus, Trash2, Tags } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
 import { aumentarPrecios, actualizarProducto, crearProducto, eliminarProducto, importarProductos, type ProductoInput } from "@/lib/db";
-import { money, number, margen, round2, pct } from "@/lib/format";
+import { money, number, margen, round2, pct, isoDate } from "@/lib/format";
 import { descargarCSV, parseCSV, parseNumero } from "@/lib/csv";
 import type { Producto, Proveedor } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, NumInput, PageHeader } from "@/components/ui";
 import { AjusteStockModal } from "@/components/AjusteStockModal";
+import { CenefasModal } from "@/components/CenefasModal";
 import { ALICUOTAS } from "@/lib/arca/calculo";
 
 const norm = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -27,6 +28,7 @@ export default function ProductosPage() {
   const [editando, setEditando] = useState<Producto | null | "nuevo">(null);
   const [ajustando, setAjustando] = useState<Producto | null>(null);
   const [masivo, setMasivo] = useState(false);
+  const [cenefas, setCenefas] = useState<{ desde?: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function eliminar(p: Producto) {
@@ -122,6 +124,9 @@ export default function ProductosPage() {
           <>
             <button className="btn-ghost" onClick={() => setMasivo(true)}>
               <TrendingUp size={16} /> Actualizar precios
+            </button>
+            <button className="btn-ghost" onClick={() => setCenefas({})}>
+              <Tags size={16} /> Cenefas
             </button>
             <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
               <Upload size={16} /> Importar
@@ -233,7 +238,14 @@ export default function ProductosPage() {
         productos={productos}
       />
       <AjusteStockModal producto={ajustando} onClose={() => setAjustando(null)} />
-      <MasivoModal open={masivo} onClose={() => setMasivo(false)} productos={productos.filter((p) => p.activo)} categorias={categorias} />
+      <MasivoModal
+        open={masivo}
+        onClose={() => setMasivo(false)}
+        onAplicado={() => setCenefas({ desde: isoDate(new Date()) })}
+        productos={productos.filter((p) => p.activo)}
+        categorias={categorias}
+      />
+      <CenefasModal open={!!cenefas} onClose={() => setCenefas(null)} productos={productos} categorias={categorias} desdeInicial={cenefas?.desde} />
     </div>
   );
 }
@@ -437,7 +449,19 @@ function ProductoModal({
   );
 }
 
-function MasivoModal({ open, onClose, productos, categorias }: { open: boolean; onClose: () => void; productos: Producto[]; categorias: string[] }) {
+function MasivoModal({
+  open,
+  onClose,
+  onAplicado,
+  productos,
+  categorias,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAplicado: () => void; // después de cambiar precios: ofrecer las cenefas
+  productos: Producto[];
+  categorias: string[];
+}) {
   const [porc, setPorc] = useState(10);
   const [cat, setCat] = useState("");
   const [aplicar, setAplicar] = useState<"precio" | "costo" | "ambos">("ambos");
@@ -495,8 +519,9 @@ function MasivoModal({ open, onClose, productos, categorias }: { open: boolean; 
             setEnviando(true);
             try {
               await aumentarPrecios(porc, cat, redondeo, aplicar);
-              toast.success("Precios actualizados");
+              toast.success("Precios actualizados. Imprimí las cenefas nuevas.");
               onClose();
+              if (aplicar !== "costo") onAplicado();
             } catch (e) {
               toast.error((e as Error).message);
             } finally {
