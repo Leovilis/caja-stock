@@ -732,6 +732,25 @@ begin
   return v_nuevo;
 end $$;
 
+-- Elimina un producto. Si ya tuvo ventas, compras o ajustes, NO lo borra: lo desactiva
+-- (sale de la caja y de las listas, pero los reportes y tickets viejos lo siguen mostrando).
+-- Devuelve 'eliminado' o 'desactivado'.
+create or replace function eliminar_producto(p_producto uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare u perfiles; p productos;
+begin
+  u := _exigir_admin();
+  select * into p from productos where id = p_producto and comercio_id = u.comercio_id for update;
+  if not found then raise exception 'Producto inexistente'; end if;
+  if exists (select 1 from venta_items where producto_id = p.id)
+     or exists (select 1 from movimientos_stock where producto_id = p.id and tipo <> 'alta') then
+    update productos set activo = false, favorito = false, actualizado = now() where id = p.id;
+    return 'desactivado';
+  end if;
+  delete from productos where id = p.id;  -- sin historia: se borra (y su movimiento de alta)
+  return 'eliminado';
+end $$;
+
 -- Aumento/baja masiva por porcentaje. p_aplicar: 'precio' | 'costo' | 'ambos'
 create or replace function aumentar_precios(p_porcentaje numeric, p_categoria text, p_redondeo numeric, p_aplicar text) returns int
 language plpgsql security definer set search_path = public as $$
@@ -1068,10 +1087,10 @@ do $$ begin
   end if;
 end $$;
 
-revoke all on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
+revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, mover_stock, aumentar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar from public, anon;
-grant execute on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
+grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, mover_stock, aumentar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar,
   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;

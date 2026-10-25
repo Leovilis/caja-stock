@@ -94,6 +94,9 @@ export async function actualizarProducto(id: string, data: Partial<Producto>) {
   check(await supabase.from("productos").update({ ...resto, actualizado: new Date().toISOString() }).eq("id", id));
 }
 
+/** 'eliminado' si no tenía historia; 'desactivado' si ya tuvo ventas/compras/ajustes */
+export const eliminarProducto = (id: string) => rpc<"eliminado" | "desactivado">("eliminar_producto", { p_producto: id });
+
 export const moverStock = (productoId: string, tipo: "ajuste" | "compra" | "merma" | "vencido", valor: number, motivo: string) =>
   rpc<number>("mover_stock", { p_producto: productoId, p_tipo: tipo, p_valor: valor, p_motivo: motivo });
 

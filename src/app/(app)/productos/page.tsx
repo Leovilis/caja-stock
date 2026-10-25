@@ -2,11 +2,11 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { Download, Edit, Plus, Star, TrendingUp, Upload, PackageMinus } from "lucide-react";
+import { Download, Edit, Plus, Star, TrendingUp, Upload, PackageMinus, Trash2 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
-import { aumentarPrecios, actualizarProducto, crearProducto, importarProductos, type ProductoInput } from "@/lib/db";
+import { aumentarPrecios, actualizarProducto, crearProducto, eliminarProducto, importarProductos, type ProductoInput } from "@/lib/db";
 import { money, number, margen, round2, pct } from "@/lib/format";
 import { descargarCSV, parseCSV, parseNumero } from "@/lib/csv";
 import type { Producto, Proveedor } from "@/lib/types";
@@ -28,6 +28,17 @@ export default function ProductosPage() {
   const [ajustando, setAjustando] = useState<Producto | null>(null);
   const [masivo, setMasivo] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  async function eliminar(p: Producto) {
+    if (!confirm(`¿Eliminar "${p.nombre}"?\n\nSi ya tuvo ventas o movimientos de stock no se borra: queda desactivado (no aparece en la caja, pero los reportes y tickets viejos lo conservan).`)) return;
+    try {
+      const r = await eliminarProducto(p.id);
+      if (r === "eliminado") toast.success(`"${p.nombre}" eliminado`);
+      else toast.success(`"${p.nombre}" tenía historial: quedó desactivado. Lo ves en el filtro «Inactivos».`, { duration: 6000 });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  }
 
   const lista = useMemo(() => {
     const palabras = norm(q).split(/\s+/).filter(Boolean);
@@ -195,6 +206,9 @@ export default function ProductosPage() {
                       </button>
                       <button className="p-1 text-slate-400 hover:text-brand-600" title="Editar" onClick={() => setEditando(p)}>
                         <Edit size={16} />
+                      </button>
+                      <button className="p-1 text-slate-400 hover:text-rose-600" title="Eliminar" onClick={() => eliminar(p)}>
+                        <Trash2 size={16} />
                       </button>
                     </td>
                   )}
