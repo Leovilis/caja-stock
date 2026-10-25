@@ -17,7 +17,7 @@ export interface DatosSucursal {
   longitud: number;
 }
 
-export const mpConectar = (body: { token: string; store_id?: string; store_nombre?: string; sucursal?: DatosSucursal }) =>
+export const mpConectar = (body: { token: string; user_id?: string; store_id?: string; store_nombre?: string; sucursal?: DatosSucursal }) =>
   llamar<{ paso: "sucursal"; nickname: string; pais: string; sucursales: SucursalOpcion[] } | { paso: "listo"; cuenta: MpCuenta }>("/api/mp/cuenta", {
     body,
   });

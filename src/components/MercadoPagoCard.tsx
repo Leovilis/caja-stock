@@ -29,6 +29,7 @@ export function MercadoPagoCard() {
   const { config } = useApp();
   const { cuenta, cargando } = useMpCuenta();
   const [token, setToken] = useState("");
+  const [userId, setUserId] = useState("");
   const [paso, setPaso] = useState<null | { nickname: string; pais: string; sucursales: SucursalOpcion[] }>(null);
   const [elegida, setElegida] = useState<string>("nueva");
   const [suc, setSuc] = useState({ nombre: "", calle: "", numero: "", ciudad: "", provincia: "Buenos Aires", coords: "" });
@@ -37,7 +38,7 @@ export function MercadoPagoCard() {
   async function paso1() {
     setEnviando(true);
     try {
-      const r = await mpConectar({ token: token.trim() });
+      const r = await mpConectar({ token: token.trim(), user_id: userId.trim() || undefined });
       if (r.paso === "sucursal") {
         setPaso(r);
         setElegida(r.sucursales[0]?.id ?? "nueva");
@@ -59,11 +60,12 @@ export function MercadoPagoCard() {
         if (!suc.nombre || !suc.calle || !suc.numero || !suc.ciudad) throw new Error("Completá nombre, calle, número y ciudad");
         await mpConectar({
           token: token.trim(),
+          user_id: userId.trim() || undefined,
           sucursal: { nombre: suc.nombre, calle: suc.calle, numero: suc.numero, ciudad: suc.ciudad, provincia: suc.provincia, latitud: c[0], longitud: c[1] },
         });
       } else {
         const s = paso?.sucursales.find((x) => x.id === elegida);
-        await mpConectar({ token: token.trim(), store_id: elegida, store_nombre: s?.nombre ?? "" });
+        await mpConectar({ token: token.trim(), user_id: userId.trim() || undefined, store_id: elegida, store_nombre: s?.nombre ?? "" });
       }
       toast.success("Mercado Pago conectado: ya podés cobrar con QR desde la caja");
       setPaso(null);
@@ -139,6 +141,12 @@ export function MercadoPagoCard() {
           </ol>
           <Field label="Access Token de producción">
             <input className="input font-mono" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="APP_USR-…" />
+          </Field>
+          <Field label="User ID (sólo si te lo pide)">
+            <input className="input max-w-xs font-mono" inputMode="numeric" value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="ej: 123456789" />
+            <span className="mt-1 block text-xs text-slate-500">
+              Número de tu cuenta de Mercado Pago. Lo ves en Tus integraciones → tu aplicación (datos de la aplicación / credenciales).
+            </span>
           </Field>
           <button className="btn-primary" disabled={enviando || token.trim().length < 20} onClick={paso1}>
             <Link2 size={16} /> {enviando ? "Verificando…" : "Conectar"}

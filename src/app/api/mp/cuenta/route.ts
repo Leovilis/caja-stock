@@ -28,7 +28,7 @@ export async function POST(req: Request) {
         throw new MpError(`${nombre}: ${err.message}`, err.detalle, err.mpStatus);
       }
     };
-    const usuario = await paso("Al verificar la cuenta", () => mpUsuario(token));
+    const usuario = await paso("Al verificar la cuenta", () => mpUsuario(token, body.user_id));
 
     if (!body.store_id && !body.sucursal) {
       const sucursales = await mpSucursales(token, usuario.id);

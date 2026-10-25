@@ -78,13 +78,21 @@ export interface UsuarioMP {
  * Datos de la cuenta dueña del token. Si /users/me no está permitido para la aplicación (403),
  * el id sale del propio token: APP_USR-<app>-<fecha>-<hash>-<user_id>.
  */
-export async function mpUsuario(token: string): Promise<UsuarioMP> {
+export async function mpUsuario(token: string, userIdManual?: string | number | null): Promise<UsuarioMP> {
   try {
     return await mp<UsuarioMP>(token, "/users/me");
   } catch (e) {
-    const id = Number(token.trim().split("-").pop());
-    if ((e as MpError).mpStatus === 403 && Number.isInteger(id) && id > 0) return { id, nickname: "", site_id: "MLA" };
-    throw e;
+    if ((e as MpError).mpStatus !== 403) throw e;
+    const manual = Number(String(userIdManual ?? "").replace(/\D/g, ""));
+    const delToken = Number(token.trim().match(/-(\d{5,})\s*$/)?.[1]);
+    const id = manual > 0 ? manual : delToken;
+    if (Number.isInteger(id) && id > 0) return { id, nickname: "", site_id: "MLA" };
+    throw new MpError(
+      "Mercado Pago no deja consultar los datos de la cuenta con este token. Completá el campo «User ID» " +
+        "(está en Mercado Pago Developers → Tus integraciones → tu aplicación, junto a las credenciales) y volvé a conectar.",
+      400,
+      403
+    );
   }
 }
 
