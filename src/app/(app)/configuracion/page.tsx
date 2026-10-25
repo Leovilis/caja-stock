@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { CheckCircle2, PlugZap, Printer, Save, X, XCircle } from "lucide-react";
-import { estadoArca } from "@/lib/arca/cliente";
+import { certificadoArca, estadoArca, subirCertificadoArca, type InfoCertificado } from "@/lib/arca/cliente";
 import { useApp } from "@/context/AppContext";
 import { guardarConfig } from "@/lib/db";
 import { imprimirTicket } from "@/lib/ticket";
@@ -147,7 +147,7 @@ export default function ConfigPage() {
           <div className="sm:col-span-2">
             <h3 className="font-semibold">Facturación electrónica (ARCA)</h3>
             <p className="text-xs text-slate-500">
-              Las facturas se emiten a pedido desde <b>Ventas</b> o al terminar una venta. El certificado digital se configura en el servidor (ver manual).
+              Las facturas se emiten a pedido desde <b>Ventas</b> o al terminar una venta. Cargá abajo el certificado digital de ARCA de este comercio (ver manual).
             </p>
           </div>
           <Field label="Condición frente al IVA">
@@ -199,6 +199,7 @@ export default function ConfigPage() {
               </select>
             </Field>
           )}
+          <CertificadoArca />
           <div className="sm:col-span-2">
             <button
               className="btn-ghost"
@@ -243,6 +244,72 @@ export default function ConfigPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Carga del certificado digital de ARCA del comercio (se guarda cifrado; la clave nunca vuelve al navegador) */
+function CertificadoArca() {
+  const [info, setInfo] = useState<InfoCertificado | null>(null);
+  const [cert, setCert] = useState("");
+  const [key, setKey] = useState("");
+  const [subiendo, setSubiendo] = useState(false);
+  useEffect(() => {
+    certificadoArca()
+      .then(setInfo)
+      .catch(() => setInfo({ cargado: false }));
+  }, []);
+
+  const leer = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    const r = new FileReader();
+    r.onload = () => set(String(r.result ?? ""));
+    r.readAsText(archivo);
+  };
+
+  async function subir() {
+    if (!cert || !key) return toast.error("Elegí los dos archivos: certificado (.crt/.pem) y clave privada (.key)");
+    setSubiendo(true);
+    try {
+      const r = await subirCertificadoArca(cert, key);
+      setInfo({ ...r, cargado: true, corresponde: true });
+      setCert("");
+      setKey("");
+      toast.success("Certificado guardado");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 sm:col-span-2">
+      <div className="mb-2 text-sm font-semibold">Certificado digital</div>
+      {info === null ? (
+        <p className="text-xs text-slate-500">Consultando…</p>
+      ) : info.cargado ? (
+        <p className="mb-2 text-xs text-emerald-700">
+          Cargado: {info.cn} {info.cuit && `· CUIT ${info.cuit}`} · vence el {info.vence?.slice(0, 10).split("-").reverse().join("/")}
+          {info.corresponde === false && <span className="text-rose-700"> · la clave no corresponde al certificado</span>}
+        </p>
+      ) : (
+        <p className="mb-2 text-xs text-amber-700">Todavía no cargaste el certificado de este comercio.</p>
+      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="text-xs text-slate-600">
+          Certificado (.crt / .pem)
+          <input type="file" accept=".crt,.pem,.cer,.txt" className="mt-1 block w-full text-xs" onChange={leer(setCert)} />
+        </label>
+        <label className="text-xs text-slate-600">
+          Clave privada (.key)
+          <input type="file" accept=".key,.pem,.txt" className="mt-1 block w-full text-xs" onChange={leer(setKey)} />
+        </label>
+      </div>
+      <button type="button" className="btn-ghost btn-sm mt-2" onClick={subir} disabled={subiendo || !cert || !key}>
+        {subiendo ? "Guardando…" : info?.cargado ? "Reemplazar certificado" : "Guardar certificado"}
+      </button>
     </div>
   );
 }

@@ -37,3 +37,14 @@ export const anularConNotaCredito = (ventaId: string, motivo: string) =>
 
 export const estadoArca = () =>
   llamar<{ ok: boolean; pasos: { paso: string; ok: boolean; detalle: string }[] }>("/api/arca/estado", { method: "GET" });
+
+export interface InfoCertificado {
+  cargado: boolean;
+  cn?: string;
+  cuit?: string;
+  vence?: string;
+  corresponde?: boolean;
+}
+export const certificadoArca = () => llamar<InfoCertificado>("/api/arca/certificado", { method: "GET" });
+export const subirCertificadoArca = (cert: string, key: string) =>
+  llamar<InfoCertificado>("/api/arca/certificado", { body: { cert, key } });

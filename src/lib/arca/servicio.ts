@@ -34,36 +34,58 @@ export class ArcaError extends Error {
 /* ------------------------------------------------------------------ */
 /* Certificado                                                         */
 /* ------------------------------------------------------------------ */
+/** Certificado y clave privada en PEM (de Supabase Vault, por comercio) */
+export interface CredencialesPem {
+  cert: string;
+  key: string;
+}
+
 /** Acepta PEM directo, PEM con "\n" escapados (variables de Vercel) o base64 del PEM */
-function leerPem(valor: string | undefined, nombre: string): string {
-  if (!valor) throw new ArcaError(`Falta la variable de entorno ${nombre} en el servidor`);
+export function leerPem(valor: string | undefined, nombre: string): string {
+  if (!valor) throw new ArcaError(`Falta cargar: ${nombre.toLowerCase()}`);
   let v = valor.trim().replace(/\\n/g, "\n");
   if (!v.includes("-----BEGIN")) v = Buffer.from(v, "base64").toString("utf8");
   if (!v.includes("-----BEGIN")) throw new ArcaError(`${nombre} no tiene un formato PEM válido`);
   return v;
 }
 
-export function credenciales() {
-  const certPem = leerPem(process.env.ARCA_CERT, "ARCA_CERT");
-  const keyPem = leerPem(process.env.ARCA_KEY, "ARCA_KEY");
-  const cert = forge.pki.certificateFromPem(certPem);
-  const key = forge.pki.privateKeyFromPem(keyPem);
+export function credenciales(pem: CredencialesPem) {
+  let cert: forge.pki.Certificate;
+  let key: forge.pki.rsa.PrivateKey;
+  try {
+    cert = forge.pki.certificateFromPem(leerPem(pem.cert, "El certificado"));
+  } catch (e) {
+    throw e instanceof ArcaError ? e : new ArcaError("El certificado no es válido (tiene que ser el .crt/.pem que descargaste de ARCA)");
+  }
+  try {
+    key = forge.pki.privateKeyFromPem(leerPem(pem.key, "La clave privada")) as forge.pki.rsa.PrivateKey;
+  } catch (e) {
+    throw e instanceof ArcaError ? e : new ArcaError("La clave privada no es válida (tiene que ser el .key con el que generaste el pedido, sin contraseña)");
+  }
   return { cert, key };
 }
 
-export function infoCertificado() {
-  const { cert } = credenciales();
+/** CUIT que figura en el certificado ("CUIT 20123456789" en el serialNumber del sujeto) */
+export function cuitDeCertificado(cert: forge.pki.Certificate) {
+  const serial = String(cert.subject.attributes.find((a) => a.type === "2.5.4.5")?.value ?? "");
+  return serial.replace(/\D/g, "");
+}
+
+export function infoCertificado(pem: CredencialesPem) {
+  const { cert, key } = credenciales(pem);
+  const pub = cert.publicKey as forge.pki.rsa.PublicKey;
+  const corresponde = pub.n.equals(key.n) && pub.e.equals(key.e);
   const cn = cert.subject.getField("CN")?.value ?? "";
   const serial = cert.subject.attributes.find((a) => a.type === "2.5.4.5")?.value ?? "";
-  return { cn, serialNumber: serial, vence: cert.validity.notAfter.toISOString() };
+  return { cn, serialNumber: serial, cuit: cuitDeCertificado(cert), vence: cert.validity.notAfter.toISOString(), corresponde };
 }
 
 /* ------------------------------------------------------------------ */
 /* WSAA — ticket de acceso                                             */
 /* ------------------------------------------------------------------ */
 /** TRA firmado en CMS (PKCS#7 SignedData con contenido incluido), en base64 */
-export function firmarTRA(servicio: string, ahora = new Date()): string {
-  const { cert, key } = credenciales();
+export function firmarTRA(servicio: string, pem: CredencialesPem, ahora = new Date()): string {
+  const { cert, key } = credenciales(pem);
   const fmt = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
   const tra =
     `<?xml version="1.0" encoding="UTF-8"?>` +
@@ -121,8 +143,8 @@ export interface TA {
 }
 
 /** Pide un TA nuevo a WSAA (usar con caché: ARCA rechaza pedidos repetidos mientras haya uno vigente) */
-export async function loginWSAA(ambiente: Ambiente, servicio = "wsfe"): Promise<TA> {
-  const cms = firmarTRA(servicio);
+export async function loginWSAA(ambiente: Ambiente, pem: CredencialesPem, servicio = "wsfe"): Promise<TA> {
+  const cms = firmarTRA(servicio, pem);
   const body = await soap(
     urlWsaa(ambiente),
     "",

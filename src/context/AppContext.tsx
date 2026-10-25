@@ -18,8 +18,10 @@ interface AppState {
   modulo: (m: Modulo) => boolean;
   /** Días hasta el vencimiento de la licencia (null = sin vencimiento) */
   diasRestantes: number | null;
-  /** La licencia venció: la app queda en modo consulta */
+  /** La licencia venció o el comercio está suspendido: la app queda en modo consulta */
   vencida: boolean;
+  /** Administrador general (gestiona los comercios clientes) */
+  esSuperadmin: boolean;
   recuperandoClave: boolean; // el usuario entró desde el link "olvidé mi contraseña"
   finRecuperacion: () => void;
   salir: () => Promise<void>;
@@ -35,6 +37,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<Config>(CONFIG_DEFAULT);
   const [caja, setCaja] = useState<Caja | null>(null);
   const [licencia, setLicencia] = useState<Licencia>(LICENCIA_DEFAULT);
+  const [esSuperadmin, setEsSuperadmin] = useState(false);
   const [recuperandoClave, setRecuperando] = useState(false);
 
   useEffect(() => {
@@ -45,7 +48,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data } = supabase.auth.onAuthStateChange((evento, session) => {
       if (evento === "PASSWORD_RECOVERY") setRecuperando(true);
       setUser(session?.user ?? null);
-      if (!session) setPerfil(null);
+      if (!session) {
+        // otro usuario puede entrar en la misma pestaña: no arrastrar datos del comercio anterior
+        setPerfil(null);
+        setConfig(CONFIG_DEFAULT);
+        setCaja(null);
+        setLicencia(LICENCIA_DEFAULT);
+        setEsSuperadmin(false);
+      }
     });
     return () => data.subscription.unsubscribe();
   }, []);
@@ -71,23 +81,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [uid, cargarPerfil]);
 
-  // Configuración y caja abierta, en vivo
+  // Configuración, plan del comercio y caja abierta, en vivo
   const activo = !!perfil?.activo;
+  const comercioId = perfil?.comercio_id;
   useEffect(() => {
-    if (!activo) return;
+    if (!activo || !comercioId) return;
     const cargarConfig = async () => {
-      const { data } = await supabase.from("config").select("*").eq("id", 1).maybeSingle();
+      const { data } = await supabase.from("config").select("*").eq("comercio_id", comercioId).maybeSingle();
       if (data) setConfig({ ...CONFIG_DEFAULT, ...(data as Partial<Config>) });
     };
     const cargarCaja = async () => {
       const { data } = await supabase.from("cajas").select("*").eq("estado", "abierta").maybeSingle();
       setCaja((data as Caja) ?? null);
     };
-    // Si la tabla todavía no existe (schema viejo), queda el plan completo sin vencimiento
     const cargarLicencia = async () => {
-      const { data } = await supabase.from("licencia").select("plan, vence, cliente, contacto").eq("id", 1).maybeSingle();
-      setLicencia(data ? { ...LICENCIA_DEFAULT, ...(data as Partial<Licencia>) } : LICENCIA_DEFAULT);
+      const { data } = await supabase.from("comercios").select("id, nombre, plan, vence, activo, contacto").eq("id", comercioId).maybeSingle();
+      if (data) setLicencia({ ...LICENCIA_DEFAULT, ...(data as Partial<Licencia>) });
     };
+    supabase.rpc("es_superadmin").then(({ data }) => setEsSuperadmin(data === true));
     cargarConfig();
     cargarCaja();
     cargarLicencia();
@@ -95,12 +106,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .channel("global")
       .on("postgres_changes", { event: "*", schema: "public", table: "config" }, cargarConfig)
       .on("postgres_changes", { event: "*", schema: "public", table: "cajas" }, cargarCaja)
-      .on("postgres_changes", { event: "*", schema: "public", table: "licencia" }, cargarLicencia)
+      .on("postgres_changes", { event: "*", schema: "public", table: "comercios", filter: `id=eq.${comercioId}` }, cargarLicencia)
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [activo]);
+  }, [activo, comercioId]);
 
   const diasRestantes = diasLicencia(licencia);
   const value: AppState = {
@@ -113,7 +124,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     licencia,
     modulo: (m) => moduloHabilitado(licencia, m),
     diasRestantes,
-    vencida: diasRestantes !== null && diasRestantes < 0,
+    vencida: !licencia.activo || (diasRestantes !== null && diasRestantes < 0),
+    esSuperadmin,
     recuperandoClave,
     finRecuperacion: () => setRecuperando(false),
     salir: async () => {

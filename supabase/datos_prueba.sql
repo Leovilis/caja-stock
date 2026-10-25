@@ -2,6 +2,8 @@
 --  DATOS DE PRUEBA — Caja & Stock
 --  Correr en Supabase → SQL Editor DESPUÉS de schema.sql y de haber
 --  creado tu usuario administrador en la app.
+--  MULTI-COMERCIO: carga los datos en el comercio que pongas en v_comercio
+--  (por defecto, el del administrador general).
 --
 --  Carga: 8 proveedores, 70 artículos con precio/costo/stock, y 30 días
 --  de historia (cajas cerradas, ventas, gastos y compras) para que los
@@ -14,6 +16,8 @@
 
 do $$
 declare
+  v_comercio text := null;   -- nombre exacto del comercio, o null = el del administrador general
+  v_com uuid;
   v_admin perfiles;
   v_dia date;
   v_caja uuid;
@@ -37,14 +41,23 @@ declare
 begin
   perform setseed(0.42);
 
-  select * into v_admin from perfiles where rol = 'admin' and activo order by creado limit 1;
-  if v_admin.id is null then
-    raise exception 'Primero creá tu usuario administrador desde la app (pantalla de login)';
+  if v_comercio is null then
+    select pf.comercio_id into v_com from superadmins s join perfiles pf on pf.id = s.user_id order by s.creado limit 1;
+  else
+    select id into v_com from comercios where nombre = v_comercio;
   end if;
-  if exists (select 1 from productos where codigo like 'PRB-%') then
+  if v_com is null then
+    raise exception 'No encuentro el comercio. Primero creá tu usuario administrador desde la app (pantalla de login)';
+  end if;
+  select * into v_admin from perfiles where comercio_id = v_com and rol = 'admin' and activo order by creado limit 1;
+  if v_admin.id is null then raise exception 'Ese comercio no tiene un administrador activo'; end if;
+  -- Todo lo que se inserte queda en ese comercio (comercio_id toma el valor por defecto del "usuario" actual)
+  perform set_config('request.jwt.claims', json_build_object('sub', v_admin.id)::text, true);
+
+  if exists (select 1 from productos where comercio_id = v_com and codigo like 'PRB-%') then
     raise exception 'Los datos de prueba ya están cargados. Si querés recargarlos, corré antes limpiar_datos.sql';
   end if;
-  if exists (select 1 from cajas where estado = 'abierta') then
+  if exists (select 1 from cajas where comercio_id = v_com and estado = 'abierta') then
     raise exception 'Cerrá la caja abierta antes de cargar los datos de prueba';
   end if;
 
@@ -136,12 +149,12 @@ begin
   insert into productos (nombre, codigo, categoria, costo, precio, stock, stock_min, proveedor_id, favorito, creado)
   select a.nombre, 'PRB-' || lpad(row_number() over (order by a.categoria, a.nombre)::text, 4, '0'),
          a.categoria, a.costo, a.precio, a.stock, a.minimo,
-         (select id from proveedores where nombre = a.prov and notas = 'PRUEBA' limit 1), a.fav, now() - interval '31 days'
+         (select id from proveedores where comercio_id = v_com and nombre = a.prov and notas = 'PRUEBA' limit 1), a.fav, now() - interval '31 days'
   from _art a;
 
   insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, motivo, fecha, usuario_nombre)
   select id, nombre, 'alta', stock, 0, stock, 'Stock inicial (datos de prueba)', now() - interval '31 days', v_admin.nombre
-  from productos where codigo like 'PRB-%';
+  from productos where comercio_id = v_com and codigo like 'PRB-%';
 
   -- ---------------- 30 días de historia ----------------
   for v_dia in select generate_series(current_date - 30, current_date - 1, interval '1 day')::date loop
@@ -159,14 +172,15 @@ begin
                   floor(random() * 60)::int, 0)) at time zone 'America/Argentina/Buenos_Aires';
       v_medio := (array['efectivo','efectivo','efectivo','efectivo','debito','debito','qr','qr','transferencia','credito'])[1 + floor(random() * 10)::int];
 
-      insert into ventas (fecha, caja_id, usuario_id, usuario_nombre, pagos)
-      values (v_hora, v_caja, v_admin.id, v_admin.nombre, '[]')
-      returning id, numero into v_venta, v_num;
+      update comercios set ultimo_ticket = ultimo_ticket + 1 where id = v_com returning ultimo_ticket into v_num;
+      insert into ventas (numero, fecha, caja_id, usuario_id, usuario_nombre, pagos)
+      values (v_num, v_hora, v_caja, v_admin.id, v_admin.nombre, '[]')
+      returning id into v_venta;
 
       v_sub := 0; v_costo := 0;
       v_items := 1 + floor(random() * 3.5)::int;
       for r in
-        select * from productos where codigo like 'PRB-%' and stock > 3
+        select * from productos where comercio_id = v_com and codigo like 'PRB-%' and stock > 3
         order by random() * (case when favorito then 0.35 else 1 end) limit v_items
       loop
         v_q := least(r.stock - 1, case when random() < 0.75 then 1 when random() < 0.7 then 2 else 6 end);
@@ -235,7 +249,7 @@ begin
     if extract(dow from v_dia) in (2, 5) then
       for r in
         select pr.*, pv.nombre as prov_nombre from productos pr join proveedores pv on pv.id = pr.proveedor_id
-        where pr.codigo like 'PRB-%' and pr.stock <= pr.stock_min * 2
+        where pr.comercio_id = v_com and pr.codigo like 'PRB-%' and pr.stock <= pr.stock_min * 2
         order by pr.stock / greatest(pr.stock_min, 1) limit 25
       loop
         v_q := greatest(r.stock_min * 3 - r.stock, 6);
@@ -266,13 +280,13 @@ begin
     (current_date -  1, 'Sueldos',                   'Quincena empleado (prueba)',     250000, 'transferencia', v_admin.nombre);
 
   -- ---------------- Algunos productos en alerta y una merma ----------------
-  for r in select * from productos where codigo like 'PRB-%' and nombre in ('Gin 700ml', 'Espumante 750ml', 'Pan lactal', 'Helado bombón') loop
+  for r in select * from productos where comercio_id = v_com and codigo like 'PRB-%' and nombre in ('Gin 700ml', 'Espumante 750ml', 'Pan lactal', 'Helado bombón') loop
     update productos set stock = case when r.nombre in ('Gin 700ml', 'Pan lactal') then 0 else 2 end where id = r.id;
     insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario_nombre)
     values (r.id, r.nombre, 'ajuste', (case when r.nombre in ('Gin 700ml', 'Pan lactal') then 0 else 2 end) - r.stock, r.stock,
             case when r.nombre in ('Gin 700ml', 'Pan lactal') then 0 else 2 end, 'Inventario (prueba)', v_admin.nombre);
   end loop;
-  for r in select * from productos where codigo like 'PRB-%' and nombre = 'Cerveza rubia botella 1L' loop
+  for r in select * from productos where comercio_id = v_com and codigo like 'PRB-%' and nombre = 'Cerveza rubia botella 1L' loop
     update productos set stock = stock - 2 where id = r.id;
     insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario_nombre)
     values (r.id, r.nombre, 'merma', -2, r.stock, r.stock - 2, 'Se rompieron al acomodar (prueba)', v_admin.nombre);
@@ -281,8 +295,8 @@ begin
   -- ---------------- Factura del proveedor: ~6 de cada 10 compras con factura A ----------------
   update compras set fac_tipo = 'A', fac_iva = round(total - total / 1.21, 2),
          comprobante = '0003-' || lpad((10000 + (random() * 89999)::int)::text, 8, '0')
-  where comprobante like 'PRUEBA-%' and random() < 0.6;
+  where comercio_id = v_com and comprobante like 'PRUEBA-%' and random() < 0.6;
 
-  update productos set actualizado = now() where codigo like 'PRB-%';
-  raise notice 'Datos de prueba cargados: % artículos, % ventas', (select count(*) from productos where codigo like 'PRB-%'), (select count(*) from ventas);
+  update productos set actualizado = now() where comercio_id = v_com and codigo like 'PRB-%';
+  raise notice 'Datos de prueba cargados: % artículos, % ventas', (select count(*) from productos where comercio_id = v_com and codigo like 'PRB-%'), (select count(*) from ventas where comercio_id = v_com);
 end $$;

@@ -1,6 +1,8 @@
 // Acceso a datos. La lógica que mueve stock o plata vive en funciones de Postgres
 // (supabase/schema.sql) que corren atómicas en el servidor; acá sólo las invocamos.
-import { rpc, supabase, errMsg } from "./supabase";
+import { createClient } from "@supabase/supabase-js";
+import { rpc, supabase, errMsg, SUPABASE_ANON_KEY, SUPABASE_URL } from "./supabase";
+import type { ComercioAdmin, Plan } from "./types";
 import type { Caja, Config, MedioPago, MovimientoCaja, Pago, Producto, Proveedor, TipoFacturaCompra, Venta } from "./types";
 import { round2 } from "./format";
 
@@ -11,7 +13,51 @@ const check = <T>(r: { data: T; error: unknown }) => {
 
 /* CONFIG ------------------------------------------------------------- */
 export async function guardarConfig(cfg: Config) {
-  check(await supabase.from("config").update(cfg).eq("id", 1));
+  // la fila es la del comercio del usuario (RLS); comercio_id no se modifica
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { comercio_id, ...datos } = cfg as Config & { comercio_id?: string; id?: number };
+  if (!comercio_id) throw new Error("No se encontró la configuración del comercio");
+  check(await supabase.from("config").update(datos).eq("comercio_id", comercio_id));
+}
+
+/* USUARIOS ----------------------------------------------------------- */
+/** Registra la invitación en la base. true = la cuenta ya existía y quedó agregada (no hay que crearla). */
+export const invitarUsuario = (email: string, nombre: string, rol: "admin" | "vendedor") =>
+  rpc<boolean>("invitar_usuario", { p_email: email, p_nombre: nombre, p_rol: rol });
+
+/* ADMINISTRADOR GENERAL ---------------------------------------------- */
+export const adminComercios = () => rpc<ComercioAdmin[]>("admin_comercios");
+export const adminCrearComercio = (c: { nombre: string; plan: Plan; vence: string | null; contacto: string; duenoEmail: string; duenoNombre: string }) =>
+  rpc<{ id: string; ya_existia: boolean }>("admin_crear_comercio", {
+    p_nombre: c.nombre,
+    p_plan: c.plan,
+    p_vence: c.vence,
+    p_contacto: c.contacto,
+    p_dueno_email: c.duenoEmail,
+    p_dueno_nombre: c.duenoNombre,
+  });
+export const adminActualizarComercio = (c: Pick<ComercioAdmin, "id" | "nombre" | "plan" | "vence" | "activo" | "contacto" | "notas">) =>
+  rpc<void>("admin_actualizar_comercio", {
+    p_id: c.id,
+    p_nombre: c.nombre,
+    p_plan: c.plan,
+    p_vence: c.vence,
+    p_activo: c.activo,
+    p_contacto: c.contacto,
+    p_notas: c.notas,
+  });
+export const adminInvitar = (comercio: string, email: string, nombre: string) =>
+  rpc<boolean>("admin_invitar", { p_comercio: comercio, p_email: email, p_nombre: nombre });
+
+/** Crea la cuenta (email + contraseña) sin cerrar la sesión actual. La base la asocia por la invitación. */
+export async function crearCuenta(email: string, pass: string, nombre: string) {
+  const temp = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "sb-alta-temporal" },
+  });
+  const { data, error } = await temp.auth.signUp({ email: email.trim(), password: pass, options: { data: { nombre: nombre.trim() } } });
+  if (error) throw new Error(errMsg(error));
+  if (!data.user || data.user.identities?.length === 0) throw new Error("Ese email ya está registrado");
+  return { confirmado: !!data.session };
 }
 
 /* VENTAS ------------------------------------------------------------- */

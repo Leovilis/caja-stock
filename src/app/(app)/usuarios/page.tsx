@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import toast from "react-hot-toast";
 import { KeyRound, Plus, UserCheck, UserX } from "lucide-react";
-import { supabase, SUPABASE_ANON_KEY, SUPABASE_URL, errMsg } from "@/lib/supabase";
+import { supabase, errMsg } from "@/lib/supabase";
+import { crearCuenta, invitarUsuario } from "@/lib/db";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import type { Perfil, Rol } from "@/lib/types";
@@ -18,21 +18,19 @@ export default function UsuariosPage() {
   const [guardando, setGuardando] = useState(false);
 
   async function crear() {
-    if (!f.nombre.trim() || !f.email.trim() || f.pass.length < 6) return toast.error("Completá nombre, email y contraseña (mín. 6)");
+    if (!f.nombre.trim() || !f.email.trim()) return toast.error("Completá nombre y email");
     setGuardando(true);
     try {
-      // Cliente aparte sin sesión persistente: crea la cuenta sin cerrar la sesión del admin
-      const temp = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "sb-alta-temporal" },
-      });
-      const { data, error } = await temp.auth.signUp({ email: f.email.trim(), password: f.pass, options: { data: { nombre: f.nombre.trim() } } });
-      if (error) throw error;
-      if (!data.user || data.user.identities?.length === 0) throw new Error("Ese email ya está registrado");
-
-      // El trigger de la base creó el perfil inactivo: lo habilitamos con el rol elegido
-      const { error: e2 } = await supabase.from("perfiles").update({ nombre: f.nombre.trim(), rol: f.rol, activo: true }).eq("id", data.user.id);
-      if (e2) throw e2;
-      toast.success(data.session ? "Usuario creado" : "Usuario creado. Debe confirmar su email antes de ingresar.", { duration: 6000 });
+      // 1) La base registra la invitación a ESTE comercio (o agrega la cuenta si ya existía sin comercio)
+      const yaExistia = await invitarUsuario(f.email.trim(), f.nombre.trim(), f.rol);
+      if (yaExistia) {
+        toast.success("Esa persona ya tenía cuenta: quedó agregada. Ingresa con su contraseña de siempre.", { duration: 7000 });
+      } else {
+        if (f.pass.length < 6) throw new Error("La contraseña inicial debe tener al menos 6 caracteres");
+        // 2) Crea la cuenta sin cerrar tu sesión; al registrarse queda activa en este comercio con el rol elegido
+        const { confirmado } = await crearCuenta(f.email, f.pass, f.nombre);
+        toast.success(confirmado ? "Usuario creado" : "Usuario creado. Debe confirmar su email antes de ingresar.", { duration: 6000 });
+      }
       setNuevo(false);
       setF({ nombre: "", email: "", pass: "", rol: "vendedor" });
       recargar();
@@ -62,7 +60,7 @@ export default function UsuariosPage() {
 
       {pendientes.length > 0 && (
         <div className="card mb-4 border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          Hay {pendientes.length} cuenta(s) inactiva(s). Si alguien se registró por su cuenta, activalo sólo si lo conocés.
+          Hay {pendientes.length} cuenta(s) desactivada(s): no pueden ingresar hasta que las vuelvas a activar.
         </div>
       )}
 
@@ -132,7 +130,7 @@ export default function UsuariosPage() {
             <input className="input" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
           </Field>
           <Field label="Contraseña inicial">
-            <input className="input" type="text" value={f.pass} onChange={(e) => setF({ ...f, pass: e.target.value })} minLength={6} />
+            <input className="input" type="text" value={f.pass} onChange={(e) => setF({ ...f, pass: e.target.value })} placeholder="Mínimo 6 caracteres (si ya tiene cuenta, no se usa)" />
           </Field>
           <Field label="Rol">
             <select className="input" value={f.rol} onChange={(e) => setF({ ...f, rol: e.target.value as Rol })}>

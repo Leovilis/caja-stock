@@ -10,7 +10,7 @@ import {
   type CondicionFiscal,
   type Letra,
 } from "./calculo";
-import { ArcaError, loginWSAA, solicitarCAE, ultimoAutorizado, type Ambiente, type TA } from "./servicio";
+import { ArcaError, credenciales, cuitDeCertificado, loginWSAA, solicitarCAE, ultimoAutorizado, type Ambiente, type CredencialesPem, type TA } from "./servicio";
 
 const URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim().replace(/\/(rest\/v1)?\/?$/, "");
 const ANON = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
@@ -33,6 +33,7 @@ export function clienteUsuario(token: string): SupabaseClient {
 
 export interface Perfil {
   id: string;
+  comercio_id: string;
   nombre: string;
   rol: "admin" | "vendedor";
   activo: boolean;
@@ -45,13 +46,15 @@ export async function usuarioDesdeRequest(req: Request): Promise<{ perfil: Perfi
   const db = admin();
   const { data, error } = await db.auth.getUser(token);
   if (error || !data.user) throw new ArcaError("Sesión vencida: volvé a ingresar", 401);
-  const { data: perfil } = await db.from("perfiles").select("id, nombre, rol, activo").eq("id", data.user.id).maybeSingle();
-  if (!perfil?.activo) throw new ArcaError("Usuario no habilitado", 403);
-  // Plan y vencimiento (si la tabla no existe todavía, se toma como plan completo)
-  const { data: lic } = await db.from("licencia").select("plan, vence").eq("id", 1).maybeSingle();
-  if (lic?.plan === "basico") throw new ArcaError("La facturación electrónica no está incluida en el plan básico", 403);
+  const { data: perfil } = await db.from("perfiles").select("id, comercio_id, nombre, rol, activo").eq("id", data.user.id).maybeSingle();
+  if (!perfil?.activo || !perfil.comercio_id) throw new ArcaError("Usuario no habilitado", 403);
+  // Plan, suspensión y vencimiento del comercio
+  const { data: com } = await db.from("comercios").select("plan, vence, activo").eq("id", perfil.comercio_id).maybeSingle();
+  if (!com) throw new ArcaError("Comercio inexistente", 403);
+  if (com.plan !== "completo") throw new ArcaError("La facturación electrónica no está incluida en el plan básico", 403);
+  if (!com.activo) throw new ArcaError("El sistema está suspendido para este comercio", 403);
   const hoyAR = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
-  if (lic?.vence && hoyAR > lic.vence) throw new ArcaError("La licencia del sistema venció", 403);
+  if (com.vence && hoyAR > com.vence) throw new ArcaError("La licencia del sistema venció", 403);
   return { perfil: perfil as Perfil, token };
 }
 
@@ -63,8 +66,8 @@ export interface ConfigFiscal {
   ambiente: Ambiente;
 }
 
-export async function configFiscal(db: SupabaseClient): Promise<ConfigFiscal> {
-  const { data: c } = await db.from("config").select("*").eq("id", 1).single();
+export async function configFiscal(db: SupabaseClient, comercioId: string): Promise<ConfigFiscal> {
+  const { data: c } = await db.from("config").select("*").eq("comercio_id", comercioId).maybeSingle();
   if (!c) throw new ArcaError("Falta la configuración del negocio");
   const cuit = String(c.fiscal_cuit ?? "").replace(/\D/g, "");
   if (!cuitValido(cuit)) throw new ArcaError("Configurá un CUIT válido del emisor en Configuración → Facturación");
@@ -80,9 +83,35 @@ export async function configFiscal(db: SupabaseClient): Promise<ConfigFiscal> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Certificado del comercio                                            */
+/* ------------------------------------------------------------------ */
+/**
+ * Certificado y clave del comercio, guardados cifrados en Supabase Vault.
+ * Compatibilidad: si el comercio no cargó uno y el servidor tiene ARCA_CERT/ARCA_KEY
+ * (instalación de un solo comercio), se usan sólo si el certificado es del MISMO CUIT.
+ */
+export async function credencialesComercio(db: SupabaseClient, comercioId: string, cuit: string): Promise<CredencialesPem> {
+  const { data, error } = await db.rpc("arca_credenciales", { p_comercio: comercioId });
+  if (error) throw new ArcaError("No se pudo leer el certificado guardado: " + error.message);
+  const fila = (Array.isArray(data) ? data[0] : data) as { cert: string | null; key: string | null } | null;
+  if (fila?.cert && fila.key) return { cert: fila.cert, key: fila.key };
+  if (process.env.ARCA_CERT && process.env.ARCA_KEY) {
+    const pem = { cert: process.env.ARCA_CERT, key: process.env.ARCA_KEY };
+    if (cuitDeCertificado(credenciales(pem).cert) === cuit) return pem;
+  }
+  throw new ArcaError("Falta el certificado digital: cargalo en Configuración → Facturación electrónica");
+}
+
+/** Guarda (o reemplaza) el certificado del comercio en Vault */
+export async function guardarCredenciales(db: SupabaseClient, comercioId: string, pem: CredencialesPem) {
+  const { error } = await db.rpc("arca_guardar_credenciales", { p_comercio: comercioId, p_cert: pem.cert, p_key: pem.key });
+  if (error) throw new ArcaError("No se pudo guardar el certificado: " + error.message);
+}
+
+/* ------------------------------------------------------------------ */
 /* Ticket de acceso con caché en la base                               */
 /* ------------------------------------------------------------------ */
-export async function obtenerTA(db: SupabaseClient, ambiente: Ambiente, cuit: string): Promise<TA> {
+export async function obtenerTA(db: SupabaseClient, ambiente: Ambiente, cuit: string, pem: CredencialesPem): Promise<TA> {
   const leer = async () => {
     const { data } = await db
       .from("arca_ta")
@@ -97,7 +126,7 @@ export async function obtenerTA(db: SupabaseClient, ambiente: Ambiente, cuit: st
   const cache = await leer();
   if (cache) return cache;
   try {
-    const ta = await loginWSAA(ambiente, "wsfe");
+    const ta = await loginWSAA(ambiente, pem, "wsfe");
     await db.from("arca_ta").upsert({ servicio: "wsfe", ambiente, cuit, token: ta.token, sign: ta.sign, expira: ta.expira.toISOString() });
     return ta;
   } catch (e) {
@@ -139,6 +168,7 @@ const soltarVenta = (db: SupabaseClient, ventaId: string) => db.from("ventas").u
 
 interface PedidoCAE {
   cfg: ConfigFiscal;
+  pem: CredencialesPem;
   tipo: number;
   docTipo: number;
   docNro: number;
@@ -149,7 +179,7 @@ interface PedidoCAE {
 
 /** Numera y pide el CAE (reintenta una vez si otro comprobante tomó el número) */
 async function pedirCAE(db: SupabaseClient, p: PedidoCAE) {
-  const ta = await obtenerTA(db, p.cfg.ambiente, p.cfg.cuit);
+  const ta = await obtenerTA(db, p.cfg.ambiente, p.cfg.cuit, p.pem);
   const fecha = hoyAR();
   for (let intento = 0; intento < 2; intento++) {
     const numero = (await ultimoAutorizado(p.cfg.ambiente, ta, p.cfg.cuit, p.cfg.puntoVenta, p.tipo)) + 1;
@@ -200,14 +230,20 @@ export interface Receptor {
 
 export async function facturarVenta(perfil: Perfil, ventaId: string, rec: Receptor) {
   const db = admin();
-  const cfg = await configFiscal(db);
-  const { data: venta } = await db.from("ventas").select("*, venta_items(*), comprobantes(*)").eq("id", ventaId).maybeSingle();
+  const cfg = await configFiscal(db, perfil.comercio_id);
+  // Con la clave secreta no hay RLS: SIEMPRE filtrar por el comercio del usuario
+  const { data: venta } = await db
+    .from("ventas")
+    .select("*, venta_items(*), comprobantes(*)")
+    .eq("id", ventaId)
+    .eq("comercio_id", perfil.comercio_id)
+    .maybeSingle();
   if (!venta) throw new ArcaError("La venta no existe");
   if (venta.estado !== "completada") throw new ArcaError("No se puede facturar una venta anulada");
   if ((venta.comprobantes ?? []).some((c: { clase: string }) => c.clase === "factura")) throw new ArcaError("Esta venta ya está facturada");
   // El vendedor sólo factura ventas de su turno (las que ve); el admin, cualquiera
   if (perfil.rol !== "admin") {
-    const { data: caja } = await db.from("cajas").select("id").eq("estado", "abierta").maybeSingle();
+    const { data: caja } = await db.from("cajas").select("id").eq("comercio_id", perfil.comercio_id).eq("estado", "abierta").maybeSingle();
     if (venta.caja_id !== caja?.id) throw new ArcaError("Sólo un administrador puede facturar ventas de turnos anteriores");
   }
 
@@ -219,11 +255,13 @@ export async function facturarVenta(perfil: Perfil, ventaId: string, rec: Recept
   const imp = calcularImportes(letra, venta.venta_items, Number(venta.total));
   if (imp.imp_total <= 0) throw new ArcaError("La venta no tiene importe para facturar");
   const tipo = TIPO_CBTE.factura[letra];
+  const pem = await credencialesComercio(db, perfil.comercio_id, cfg.cuit);
 
   await tomarVenta(db, ventaId);
   try {
-    const r = await pedirCAE(db, { cfg, tipo, docTipo, docNro, condicion: Number(rec.condicion), imp });
+    const r = await pedirCAE(db, { cfg, pem, tipo, docTipo, docNro, condicion: Number(rec.condicion), imp });
     return await guardar(db, {
+      comercio_id: perfil.comercio_id,
       venta_id: ventaId,
       clase: "factura",
       letra,
@@ -256,8 +294,8 @@ export async function facturarVenta(perfil: Perfil, ventaId: string, rec: Recept
 export async function notaCreditoVenta(perfil: Perfil, ventaId: string) {
   if (perfil.rol !== "admin") throw new ArcaError("Sólo un administrador puede emitir notas de crédito", 403);
   const db = admin();
-  const cfg = await configFiscal(db);
-  const { data: comps } = await db.from("comprobantes").select("*").eq("venta_id", ventaId);
+  const cfg = await configFiscal(db, perfil.comercio_id);
+  const { data: comps } = await db.from("comprobantes").select("*").eq("venta_id", ventaId).eq("comercio_id", perfil.comercio_id);
   const fac = (comps ?? []).find((c) => c.clase === "factura");
   if (!fac) throw new ArcaError("La venta no tiene factura");
   const nc = (comps ?? []).find((c) => c.clase === "nota_credito");
@@ -267,10 +305,12 @@ export async function notaCreditoVenta(perfil: Perfil, ventaId: string) {
 
   const letra = fac.letra as Letra;
   const tipo = TIPO_CBTE.nota_credito[letra];
+  const pem = await credencialesComercio(db, perfil.comercio_id, cfg.cuit);
   await tomarVenta(db, ventaId);
   try {
     const r = await pedirCAE(db, {
       cfg: { ...cfg, puntoVenta: fac.punto_venta },
+      pem,
       tipo,
       docTipo: fac.doc_tipo,
       docNro: Number(fac.doc_nro),
@@ -279,6 +319,7 @@ export async function notaCreditoVenta(perfil: Perfil, ventaId: string) {
       asociado: { tipo: fac.tipo, ptoVta: fac.punto_venta, numero: Number(fac.numero), cuit: cfg.cuit, fecha: String(fac.fecha).replace(/-/g, "") },
     });
     return await guardar(db, {
+      comercio_id: perfil.comercio_id,
       venta_id: ventaId,
       clase: "nota_credito",
       letra,

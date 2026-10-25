@@ -4,6 +4,7 @@ export type Rol = "admin" | "vendedor";
 
 export interface Perfil {
   id: string;
+  comercio_id: string;
   nombre: string;
   email: string;
   rol: Rol;
@@ -247,7 +248,7 @@ export const CONFIG_DEFAULT: Config = {
 export const facturacionConfigurada = (c: Config) => !!(c.fiscal_cuit && c.fiscal_razon_social && c.fiscal_punto_venta > 0);
 
 // ---------------------------------------------------------------------
-// Licencia / plan (tabla `licencia`, fila única; sólo se cambia desde el SQL Editor)
+// Plan y vencimiento del comercio (tabla `comercios`; sólo lo cambia el administrador general)
 // ---------------------------------------------------------------------
 export type Plan = "basico" | "completo";
 
@@ -271,13 +272,34 @@ export type Modulo =
 export const MODULOS_BASICO: Modulo[] = ["pos", "caja", "ventas", "productos", "stock", "usuarios", "configuracion"];
 
 export interface Licencia {
+  id: string;
+  nombre: string;
   plan: Plan;
   vence: string | null; // YYYY-MM-DD, último día de uso
-  cliente: string;
+  activo: boolean; // false = suspendido
   contacto: string;
 }
 
-export const LICENCIA_DEFAULT: Licencia = { plan: "completo", vence: null, cliente: "", contacto: "" };
+/** Mientras carga: plan básico sin vencimiento (no muestra de más) */
+export const LICENCIA_DEFAULT: Licencia = { id: "", nombre: "", plan: "basico", vence: null, activo: true, contacto: "" };
+
+/** Fila del panel de clientes (función admin_comercios) */
+export interface ComercioAdmin {
+  id: string;
+  nombre: string;
+  plan: Plan;
+  vence: string | null;
+  activo: boolean;
+  contacto: string;
+  notas: string;
+  creado: string;
+  usuarios: number;
+  dueno: string | null;
+  ventas_30d: number;
+  total_30d: number;
+  ultima_venta: string | null;
+  productos: number;
+}
 
 export const moduloHabilitado = (l: Licencia, m: Modulo) => l.plan === "completo" || MODULOS_BASICO.includes(m);
 

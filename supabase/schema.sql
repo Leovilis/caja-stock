@@ -1,25 +1,60 @@
 -- =====================================================================
---  CAJA & STOCK — Esquema Supabase / PostgreSQL
---  Ejecutar completo en: Supabase → SQL Editor → New query → Run
---  Es idempotente en funciones/políticas; las tablas se crean si no existen.
+--  CAJA & STOCK — Esquema Supabase / PostgreSQL  (v2: MULTI-COMERCIO)
+--  Una sola base para varios comercios: cada fila tiene comercio_id y las
+--  políticas RLS hacen que cada usuario vea sólo lo de su comercio.
+--
+--  Instalación nueva:  SQL Editor → pegar este archivo completo → Run.
+--  Base de un solo comercio (v1): correr ANTES migrar_a_multicomercio.sql.
+--  Es idempotente: se puede volver a correr sin perder datos.
 -- =====================================================================
 
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------------
--- TABLAS
+-- COMERCIOS (clientes) y administración general
+-- ---------------------------------------------------------------------
+create table if not exists comercios (
+  id             uuid primary key default gen_random_uuid(),
+  nombre         text not null,
+  plan           text not null default 'basico' check (plan in ('basico', 'completo')),
+  vence          date,                         -- último día de uso (null = sin vencimiento)
+  activo         boolean not null default true, -- false = suspendido (modo consulta)
+  contacto       text not null default '',     -- a quién llamar (aparece en los avisos de vencimiento)
+  notas          text not null default '',     -- notas internas del superadmin
+  ultimo_ticket  bigint not null default 0,    -- numeración de tickets propia de cada comercio
+  creado         timestamptz not null default now()
+);
+
+-- Quiénes administran la plataforma (ven y gestionan todos los comercios, no sus datos)
+create table if not exists superadmins (
+  user_id  uuid primary key references auth.users(id) on delete cascade,
+  creado   timestamptz not null default now()
+);
+
+-- Altas pendientes: al registrarse ese email, queda en ese comercio con ese rol
+create table if not exists invitaciones (
+  email        text primary key,               -- en minúsculas
+  comercio_id  uuid not null references comercios(id) on delete cascade,
+  nombre       text not null default '',
+  rol          text not null default 'vendedor' check (rol in ('admin', 'vendedor')),
+  creado       timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------
+-- TABLAS DE CADA COMERCIO (comercio_id se agrega/valida más abajo)
 -- ---------------------------------------------------------------------
 create table if not exists perfiles (
-  id      uuid primary key references auth.users(id) on delete cascade,
-  nombre  text not null,
-  email   text not null,
-  rol     text not null default 'vendedor' check (rol in ('admin','vendedor')),
-  activo  boolean not null default false,
-  creado  timestamptz not null default now()
+  id           uuid primary key references auth.users(id) on delete cascade,
+  comercio_id  uuid,
+  nombre       text not null,
+  email        text not null,
+  rol          text not null default 'vendedor' check (rol in ('admin','vendedor')),
+  activo       boolean not null default false,
+  creado       timestamptz not null default now()
 );
 
 create table if not exists config (
-  id                       int primary key default 1 check (id = 1),
+  comercio_id              uuid primary key,
   nombre                   text not null default 'Mi Drugstore',
   direccion                text not null default '',
   telefono                 text not null default '',
@@ -35,22 +70,23 @@ create table if not exists config (
     'Alquiler','Luz','Internet / Teléfono','Sueldos','Impuestos / ARCA','Comisiones bancarias / MP',
     'Mantenimiento','Limpieza','Bolsas / Insumos','Transporte / Fletes','Otros']
 );
-insert into config (id) values (1) on conflict do nothing;
 
 create table if not exists proveedores (
-  id          uuid primary key default gen_random_uuid(),
-  nombre      text not null,
-  contacto    text not null default '',
-  telefono    text not null default '',
-  email       text not null default '',
-  cuit        text not null default '',
-  dias_visita text not null default '',
-  notas       text not null default '',
-  creado      timestamptz not null default now()
+  id           uuid primary key default gen_random_uuid(),
+  comercio_id  uuid,
+  nombre       text not null,
+  contacto     text not null default '',
+  telefono     text not null default '',
+  email        text not null default '',
+  cuit         text not null default '',
+  dias_visita  text not null default '',
+  notas        text not null default '',
+  creado       timestamptz not null default now()
 );
 
 create table if not exists productos (
   id            uuid primary key default gen_random_uuid(),
+  comercio_id   uuid,
   nombre        text not null,
   codigo        text not null default '',
   categoria     text not null default 'Varios',
@@ -65,11 +101,11 @@ create table if not exists productos (
   creado        timestamptz not null default now(),
   actualizado   timestamptz not null default now()
 );
-create unique index if not exists productos_codigo_uk on productos (codigo) where codigo <> '';
 create index if not exists productos_nombre_idx on productos (lower(nombre));
 
 create table if not exists cajas (
   id                  uuid primary key default gen_random_uuid(),
+  comercio_id         uuid,
   estado              text not null default 'abierta' check (estado in ('abierta','cerrada')),
   apertura            timestamptz not null default now(),
   abierta_por         uuid references perfiles(id),
@@ -87,14 +123,11 @@ create table if not exists cajas (
   diferencia          numeric(14,2),
   observaciones       text
 );
--- Sólo una caja abierta a la vez
-create unique index if not exists cajas_una_abierta on cajas ((true)) where estado = 'abierta';
-
-create sequence if not exists ventas_numero_seq;
 
 create table if not exists ventas (
   id                uuid primary key default gen_random_uuid(),
-  numero            bigint not null unique default nextval('ventas_numero_seq'),
+  comercio_id       uuid,
+  numero            bigint not null,           -- correlativo por comercio (comercios.ultimo_ticket)
   fecha             timestamptz not null default now(),
   subtotal          numeric(14,2) not null default 0,
   descuento         numeric(14,2) not null default 0,
@@ -111,11 +144,11 @@ create table if not exists ventas (
   anulada_por       text,
   fecha_anulacion   timestamptz
 );
-create index if not exists ventas_fecha_idx on ventas (fecha desc);
 create index if not exists ventas_caja_idx on ventas (caja_id);
 
 create table if not exists venta_items (
   id           bigint generated always as identity primary key,
+  comercio_id  uuid,
   venta_id     uuid not null references ventas(id) on delete cascade,
   producto_id  uuid references productos(id) on delete set null,
   nombre       text not null,
@@ -131,6 +164,7 @@ create index if not exists venta_items_producto_idx on venta_items (producto_id)
 
 create table if not exists movimientos_caja (
   id              uuid primary key default gen_random_uuid(),
+  comercio_id     uuid,
   caja_id         uuid not null references cajas(id),
   tipo            text not null check (tipo in ('ingreso','egreso')),
   monto           numeric(14,2) not null check (monto > 0),
@@ -144,6 +178,7 @@ create index if not exists movimientos_caja_caja_idx on movimientos_caja (caja_i
 
 create table if not exists movimientos_stock (
   id              bigint generated always as identity primary key,
+  comercio_id     uuid,
   producto_id     uuid references productos(id) on delete cascade,
   nombre          text not null,
   tipo            text not null check (tipo in ('venta','compra','ajuste','merma','vencido','anulacion','alta')),
@@ -155,10 +190,10 @@ create table if not exists movimientos_stock (
   fecha           timestamptz not null default now(),
   usuario_nombre  text not null
 );
-create index if not exists movimientos_stock_fecha_idx on movimientos_stock (fecha desc);
 
 create table if not exists compras (
   id                 uuid primary key default gen_random_uuid(),
+  comercio_id        uuid,
   fecha              timestamptz not null default now(),
   proveedor_id       uuid references proveedores(id) on delete set null,
   proveedor_nombre   text not null,
@@ -169,10 +204,10 @@ create table if not exists compras (
   pagado_desde_caja  boolean not null default false,
   usuario_nombre     text not null
 );
-create index if not exists compras_fecha_idx on compras (fecha desc);
 
 create table if not exists gastos (
   id              uuid primary key default gen_random_uuid(),
+  comercio_id     uuid,
   fecha           date not null default current_date,
   categoria       text not null,
   descripcion     text not null default '',
@@ -182,19 +217,16 @@ create table if not exists gastos (
   usuario_nombre  text not null,
   creado          timestamptz not null default now()
 );
-create index if not exists gastos_fecha_idx on gastos (fecha desc);
 
 -- ---------------------------------------------------------------------
--- FACTURACIÓN ELECTRÓNICA ARCA (agregado v1.1)
+-- FACTURACIÓN ELECTRÓNICA ARCA
 -- ---------------------------------------------------------------------
--- Alícuota de IVA de cada artículo (los precios son finales, IVA incluido)
 alter table productos   add column if not exists alicuota_iva numeric(5,2) not null default 21;
 alter table venta_items add column if not exists alicuota_iva numeric(5,2) not null default 21;
 do $$ begin
   alter table productos add constraint productos_alicuota_ck check (alicuota_iva in (0, 2.5, 5, 10.5, 21, 27));
 exception when duplicate_object then null; end $$;
 
--- Datos fiscales del emisor (no secretos; el certificado va en variables de entorno del servidor)
 alter table config add column if not exists fiscal_condicion text not null default 'monotributo';
 alter table config add column if not exists fiscal_cuit text not null default '';
 alter table config add column if not exists fiscal_razon_social text not null default '';
@@ -209,12 +241,11 @@ do $$ begin
     and fiscal_ambiente in ('homologacion', 'produccion'));
 exception when duplicate_object then null; end $$;
 
--- Marca de "facturación en curso" para que dos pedidos simultáneos no facturen la misma venta
 alter table ventas add column if not exists facturando timestamptz;
 
--- Comprobantes autorizados por ARCA (facturas y notas de crédito)
 create table if not exists comprobantes (
   id                  uuid primary key default gen_random_uuid(),
+  comercio_id         uuid,
   venta_id            uuid not null references ventas(id),
   clase               text not null check (clase in ('factura', 'nota_credito')),
   letra               text not null check (letra in ('A', 'B', 'C')),
@@ -232,7 +263,7 @@ create table if not exists comprobantes (
   imp_total           numeric(14,2) not null,
   imp_neto            numeric(14,2) not null,
   imp_iva             numeric(14,2) not null,
-  iva                 jsonb not null default '[]',   -- [{alicuota, base, importe}]
+  iva                 jsonb not null default '[]',
   asociado_id         uuid references comprobantes(id),
   ambiente            text not null,
   emisor_cuit         text not null,
@@ -242,18 +273,16 @@ create table if not exists comprobantes (
   unique (ambiente, emisor_cuit, tipo, punto_venta, numero)
 );
 create index if not exists comprobantes_venta_idx on comprobantes (venta_id);
--- una sola factura y una sola nota de crédito por venta
 create unique index if not exists comprobantes_una_factura on comprobantes (venta_id, clase);
 
--- Factura del proveedor en las compras (para separar compras con y sin factura)
 alter table compras add column if not exists fac_tipo text not null default 'sin_factura';
-alter table compras add column if not exists fac_iva  numeric(14,2) not null default 0;   -- IVA discriminado (sólo factura A)
+alter table compras add column if not exists fac_iva  numeric(14,2) not null default 0;
 do $$ begin
   alter table compras add constraint compras_fac_ck check (fac_tipo in ('sin_factura', 'A', 'B', 'C') and fac_iva >= 0
     and (fac_tipo = 'A' or fac_iva = 0));
 exception when duplicate_object then null; end $$;
 
--- Caché del ticket de acceso de WSAA (vale ~12 h). Sólo lo usa el servidor (sin políticas = invisible para el navegador)
+-- Caché del ticket de acceso de WSAA (por CUIT). Sólo el servidor (sin políticas)
 create table if not exists arca_ta (
   servicio  text not null,
   ambiente  text not null,
@@ -265,39 +294,76 @@ create table if not exists arca_ta (
 );
 
 -- ---------------------------------------------------------------------
--- LICENCIA / PLAN (agregado v1.2)
---   plan 'completo' = todo; 'basico' = POS, caja, ventas, productos, stock, usuarios y configuración.
---   vence: último día de uso (null = sin vencimiento). Vencida, la app queda en modo consulta.
---   Sólo se cambia desde el SQL Editor de Supabase (no hay política de UPDATE: el cliente no puede tocarla).
+-- COMERCIO DEL USUARIO Y PERMISOS
+--   (plpgsql: el cuerpo se valida al ejecutar, así no importa el orden de creación)
 -- ---------------------------------------------------------------------
-create table if not exists licencia (
-  id        int primary key default 1 check (id = 1),
-  plan      text not null default 'completo' check (plan in ('basico', 'completo')),
-  vence     date,
-  cliente   text not null default '',
-  contacto  text not null default ''
-);
-insert into licencia (id) values (1) on conflict do nothing;
+-- Comercio del usuario logueado (null si no tiene perfil)
+create or replace function mi_comercio() returns uuid
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select comercio_id from perfiles where id = auth.uid());
+end $$;
 
--- ---------------------------------------------------------------------
--- HELPERS DE PERMISOS
--- ---------------------------------------------------------------------
 create or replace function es_activo() returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from perfiles where id = auth.uid() and activo);
-$$;
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from perfiles where id = auth.uid() and activo);
+end $$;
 
 create or replace function es_admin() returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from perfiles where id = auth.uid() and activo and rol = 'admin');
-$$;
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from perfiles where id = auth.uid() and activo and rol = 'admin');
+end $$;
 
--- ¿El plan contratado incluye este módulo?
+create or replace function es_superadmin() returns boolean
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from superadmins where user_id = auth.uid());
+end $$;
+
+-- ---------------------------------------------------------------------
+-- comercio_id en todas las tablas del comercio: obligatorio, con FK, índice
+-- y por defecto el comercio del usuario (así ningún INSERT puede "olvidarlo")
+-- ---------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['perfiles','config','proveedores','productos','cajas','ventas','venta_items',
+                           'movimientos_caja','movimientos_stock','compras','gastos','comprobantes'] loop
+    execute format('alter table %I add column if not exists comercio_id uuid', t);
+    if t not in ('perfiles', 'config') then
+      execute format('alter table %I alter column comercio_id set default mi_comercio()', t);
+    end if;
+    execute format('alter table %I alter column comercio_id set not null', t);
+    if not exists (select 1 from pg_constraint where conname = t || '_comercio_fk') then
+      execute format('alter table %I add constraint %I foreign key (comercio_id) references comercios(id) on delete cascade',
+                     t, t || '_comercio_fk');
+    end if;
+    execute format('create index if not exists %I on %I (comercio_id)', t || '_comercio_idx', t);
+  end loop;
+end $$;
+
+-- Únicos POR COMERCIO (dos kioscos pueden tener el mismo código de barras, cada uno su ticket #1, su caja abierta)
+create unique index if not exists productos_codigo_uk2 on productos (comercio_id, codigo) where codigo <> '';
+create unique index if not exists cajas_una_abierta2 on cajas (comercio_id) where estado = 'abierta';
+create unique index if not exists ventas_numero_uk on ventas (comercio_id, numero);
+create index if not exists ventas_fecha_idx2 on ventas (comercio_id, fecha desc);
+create index if not exists movimientos_stock_fecha_idx2 on movimientos_stock (comercio_id, fecha desc);
+create index if not exists compras_fecha_idx2 on compras (comercio_id, fecha desc);
+create index if not exists gastos_fecha_idx2 on gastos (comercio_id, fecha desc);
+
+-- ---------------------------------------------------------------------
+-- PLAN Y VENCIMIENTO (por comercio)
+--   'completo' = todo; 'basico' = POS, caja, ventas, productos, stock, usuarios y configuración.
+--   Vencido o suspendido: modo consulta (se ve todo y se puede cerrar la caja abierta).
+-- ---------------------------------------------------------------------
 create or replace function modulo_habilitado(p_modulo text) returns boolean
-language sql stable security definer set search_path = public as $$
-  select coalesce((select plan = 'completo' from licencia where id = 1), true)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return coalesce((select plan = 'completo' from comercios where id = mi_comercio()), false)
       or p_modulo in ('pos', 'caja', 'ventas', 'productos', 'stock', 'usuarios', 'configuracion');
-$$;
+end $$;
 
 create or replace function _exigir_modulo(p_modulo text) returns void
 language plpgsql stable security definer set search_path = public as $$
@@ -307,22 +373,28 @@ begin
   end if;
 end $$;
 
--- ¿La licencia está vigente? (para las políticas de edición directa)
+-- ¿El comercio del usuario puede operar? (para las políticas de edición directa)
 create or replace function licencia_activa() returns boolean
-language sql stable security definer set search_path = public as $$
-  select coalesce((select vence is null or (now() at time zone 'America/Argentina/Buenos_Aires')::date <= vence
-                   from licencia where id = 1), true);
-$$;
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return coalesce((select activo and (vence is null or (now() at time zone 'America/Argentina/Buenos_Aires')::date <= vence)
+                   from comercios where id = mi_comercio()), false);
+end $$;
 
--- Corta si la licencia venció (se puede usar hasta el día de vencimiento inclusive, hora Argentina)
+-- Corta si el comercio está suspendido o venció (se usa hasta el día de vencimiento inclusive, hora Argentina)
 create or replace function _licencia_vigente() returns void
 language plpgsql stable security definer set search_path = public as $$
-declare l licencia;
+declare c comercios;
 begin
-  select * into l from licencia where id = 1;
-  if found and l.vence is not null and (now() at time zone 'America/Argentina/Buenos_Aires')::date > l.vence then
-    raise exception 'El período de prueba venció el %. El sistema quedó en modo consulta: contactá a % para seguir usándolo.',
-      to_char(l.vence, 'DD/MM/YYYY'), coalesce(nullif(l.contacto, ''), 'tu proveedor del sistema');
+  select * into c from comercios where id = mi_comercio();
+  if not found then raise exception 'Usuario sin comercio asignado'; end if;
+  if not c.activo then
+    raise exception 'El sistema está suspendido para este comercio. Contactá a % para reactivarlo.',
+      coalesce(nullif(c.contacto, ''), 'tu proveedor del sistema');
+  end if;
+  if c.vence is not null and (now() at time zone 'America/Argentina/Buenos_Aires')::date > c.vence then
+    raise exception 'El período de uso venció el %. El sistema quedó en modo consulta: contactá a % para seguir usándolo.',
+      to_char(c.vence, 'DD/MM/YYYY'), coalesce(nullif(c.contacto, ''), 'tu proveedor del sistema');
   end if;
 end $$;
 
@@ -355,31 +427,151 @@ begin
   return v;
 end $$;
 
--- ¿Ya hay usuarios? (la pantalla de login lo usa para ofrecer "crear administrador")
-create or replace function sistema_inicializado() returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from perfiles);
-$$;
+create or replace function _exigir_superadmin() returns void
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not es_superadmin() then raise exception 'Sólo el administrador general puede hacer esto'; end if;
+end $$;
 
--- Al registrarse un usuario: el PRIMERO queda como admin activo;
--- los demás quedan como vendedor INACTIVO hasta que un admin los habilite.
+-- ¿Ya está creado el administrador general? (la pantalla de login lo usa para la configuración inicial)
+create or replace function sistema_inicializado() returns boolean
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from superadmins);
+end $$;
+
+-- Crea un comercio con su configuración (uso interno)
+create or replace function _crear_comercio(p_nombre text, p_plan text, p_vence date, p_contacto text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare v_id uuid;
+begin
+  if coalesce(trim(p_nombre), '') = '' then raise exception 'Indicá el nombre del comercio'; end if;
+  if p_plan not in ('basico', 'completo') then raise exception 'Plan inválido'; end if;
+  insert into comercios (nombre, plan, vence, contacto) values (trim(p_nombre), p_plan, p_vence, coalesce(p_contacto, ''))
+  returning id into v_id;
+  insert into config (comercio_id, nombre) values (v_id, trim(p_nombre));
+  return v_id;
+end $$;
+
+-- Al registrarse un usuario:
+--   * el PRIMERO de toda la base es el administrador general y dueño de un comercio con plan completo;
+--   * si su email tiene una invitación, queda activo en ese comercio con ese rol;
+--   * si no, no se le crea perfil (ve "usuario sin acceso").
 create or replace function _nuevo_usuario() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare primero boolean;
+declare inv invitaciones; v_com uuid; v_nombre text;
 begin
   perform pg_advisory_xact_lock(424242);
-  primero := not exists (select 1 from perfiles);
-  insert into perfiles (id, email, nombre, rol, activo)
-  values (new.id, new.email,
-          coalesce(nullif(new.raw_user_meta_data->>'nombre', ''), split_part(new.email, '@', 1)),
-          case when primero then 'admin' else 'vendedor' end,
-          primero);
+  v_nombre := coalesce(nullif(new.raw_user_meta_data->>'nombre', ''), split_part(new.email, '@', 1));
+  if not exists (select 1 from superadmins) then
+    v_com := _crear_comercio('Mi comercio', 'completo', null, '');
+    insert into perfiles (id, comercio_id, email, nombre, rol, activo) values (new.id, v_com, new.email, v_nombre, 'admin', true);
+    insert into superadmins (user_id) values (new.id);
+    return new;
+  end if;
+  select * into inv from invitaciones where email = lower(new.email);
+  if found then
+    insert into perfiles (id, comercio_id, email, nombre, rol, activo)
+    values (new.id, inv.comercio_id, new.email, coalesce(nullif(inv.nombre, ''), v_nombre), inv.rol, true);
+    delete from invitaciones where email = inv.email;
+  end if;
   return new;
 end $$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function _nuevo_usuario();
+
+-- Registra la invitación; si el email ya tenía cuenta (sin comercio), lo agrega directamente.
+-- Devuelve true si la cuenta ya existía (no hace falta crearla).
+create or replace function _invitar(p_comercio uuid, p_email text, p_nombre text, p_rol text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_email text := lower(trim(p_email)); v_user uuid; v_otro uuid;
+begin
+  if v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then raise exception 'Email inválido'; end if;
+  if p_rol not in ('admin', 'vendedor') then raise exception 'Rol inválido'; end if;
+  select id into v_user from auth.users where lower(email) = v_email;
+  if v_user is not null then
+    select comercio_id into v_otro from perfiles where id = v_user;
+    if v_otro is not null then raise exception 'Ese email ya tiene cuenta en otro comercio (o en este)'; end if;
+    insert into perfiles (id, comercio_id, email, nombre, rol, activo)
+    values (v_user, p_comercio, v_email, coalesce(nullif(trim(p_nombre), ''), split_part(v_email, '@', 1)), p_rol, true);
+    return true;
+  end if;
+  if exists (select 1 from invitaciones where email = v_email and comercio_id <> p_comercio) then
+    raise exception 'Ese email ya tiene una invitación pendiente en otro comercio';
+  end if;
+  insert into invitaciones (email, comercio_id, nombre, rol) values (v_email, p_comercio, coalesce(trim(p_nombre), ''), p_rol)
+  on conflict (email) do update set comercio_id = excluded.comercio_id, nombre = excluded.nombre, rol = excluded.rol, creado = now();
+  return false;
+end $$;
+
+-- El admin de un comercio da de alta un usuario en SU comercio (después la app crea la cuenta con signUp)
+create or replace function invitar_usuario(p_email text, p_nombre text, p_rol text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare u perfiles;
+begin
+  u := _exigir_admin();
+  return _invitar(u.comercio_id, p_email, p_nombre, p_rol);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- PANEL DEL ADMINISTRADOR GENERAL (superadmin)
+--   Gestiona comercios (plan, vencimiento, suspensión). No ve ventas ni productos de otros.
+-- ---------------------------------------------------------------------
+create or replace function admin_comercios() returns table (
+  id uuid, nombre text, plan text, vence date, activo boolean, contacto text, notas text, creado timestamptz,
+  usuarios bigint, dueno text, ventas_30d bigint, total_30d numeric, ultima_venta timestamptz, productos bigint
+)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  perform _exigir_superadmin();
+  return query
+  select c.id, c.nombre, c.plan, c.vence, c.activo, c.contacto, c.notas, c.creado,
+         (select count(*) from perfiles p where p.comercio_id = c.id and p.activo),
+         (select p.email from perfiles p where p.comercio_id = c.id and p.rol = 'admin' order by p.creado limit 1),
+         (select count(*) from ventas v where v.comercio_id = c.id and v.estado = 'completada' and v.fecha > now() - interval '30 days'),
+         (select coalesce(sum(v.total), 0) from ventas v where v.comercio_id = c.id and v.estado = 'completada' and v.fecha > now() - interval '30 days'),
+         (select max(v.fecha) from ventas v where v.comercio_id = c.id),
+         (select count(*) from productos pr where pr.comercio_id = c.id)
+  from comercios c
+  order by c.creado;
+end $$;
+
+-- Crea el comercio e invita al dueño (admin). Devuelve {id, ya_existia}.
+create or replace function admin_crear_comercio(
+  p_nombre text, p_plan text, p_vence date, p_contacto text, p_dueno_email text, p_dueno_nombre text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v_id uuid; v_existia boolean;
+begin
+  perform _exigir_superadmin();
+  v_id := _crear_comercio(p_nombre, p_plan, p_vence, p_contacto);
+  v_existia := _invitar(v_id, p_dueno_email, p_dueno_nombre, 'admin');
+  return jsonb_build_object('id', v_id, 'ya_existia', v_existia);
+end $$;
+
+create or replace function admin_actualizar_comercio(
+  p_id uuid, p_nombre text, p_plan text, p_vence date, p_activo boolean, p_contacto text, p_notas text
+) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _exigir_superadmin();
+  if p_plan not in ('basico', 'completo') then raise exception 'Plan inválido'; end if;
+  update comercios set nombre = coalesce(nullif(trim(p_nombre), ''), nombre), plan = p_plan, vence = p_vence,
+         activo = coalesce(p_activo, true), contacto = coalesce(p_contacto, ''), notas = coalesce(p_notas, '')
+  where id = p_id;
+  if not found then raise exception 'Comercio inexistente'; end if;
+end $$;
+
+-- Invita otro administrador a un comercio (ej: el dueño perdió el acceso)
+create or replace function admin_invitar(p_comercio uuid, p_email text, p_nombre text) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _exigir_superadmin();
+  if not exists (select 1 from comercios where id = p_comercio) then raise exception 'Comercio inexistente'; end if;
+  return _invitar(p_comercio, p_email, p_nombre, 'admin');
+end $$;
 
 -- ---------------------------------------------------------------------
 -- VENTAS
@@ -398,8 +590,8 @@ declare
   r record;
 begin
   u := _perfil_activo();
-  select * into cfg from config where id = 1;
-  select id into v_caja from cajas where estado = 'abierta';
+  select * into cfg from config where comercio_id = u.comercio_id;
+  select id into v_caja from cajas where comercio_id = u.comercio_id and estado = 'abierta';
   if v_caja is null then raise exception 'La caja está cerrada'; end if;
   if p_items is null or jsonb_array_length(p_items) = 0 then raise exception 'El ticket está vacío'; end if;
 
@@ -407,7 +599,7 @@ begin
   for r in
     select pr.id, pr.nombre, pr.stock, sum((e->>'cantidad')::numeric) as cant
     from jsonb_array_elements(p_items) e
-    join productos pr on pr.id = (e->>'producto_id')::uuid
+    join productos pr on pr.id = (e->>'producto_id')::uuid and pr.comercio_id = u.comercio_id
     group by pr.id, pr.nombre, pr.stock
     order by pr.id
   loop
@@ -422,7 +614,7 @@ begin
     v_cant := (it->>'cantidad')::numeric;
     if v_cant is null or v_cant <= 0 then raise exception 'Cantidad inválida'; end if;
     if nullif(it->>'producto_id', '') is not null then
-      select precio into v_precio from productos where id = (it->>'producto_id')::uuid;
+      select precio into v_precio from productos where id = (it->>'producto_id')::uuid and comercio_id = u.comercio_id;
       if not found then raise exception 'Un producto del ticket ya no existe'; end if;
     else
       v_precio := (it->>'precio')::numeric;
@@ -439,18 +631,19 @@ begin
     raise exception 'Los precios cambiaron: el total actual es %. Revisá el ticket y cobrá de nuevo.', v_total;
   end if;
 
-  -- 2) Registra la venta
-  insert into ventas (caja_id, usuario_id, usuario_nombre, subtotal, descuento, total, recibido, vuelto, pagos)
-  values (v_caja, u.id, u.nombre, v_sub, p_descuento, v_total, coalesce(p_recibido, 0), coalesce(p_vuelto, 0),
+  -- 2) Registra la venta con el próximo número de ticket DEL COMERCIO (el UPDATE bloquea la fila: sin saltos ni repetidos)
+  update comercios set ultimo_ticket = ultimo_ticket + 1 where id = u.comercio_id returning ultimo_ticket into v_num;
+  insert into ventas (comercio_id, numero, caja_id, usuario_id, usuario_nombre, subtotal, descuento, total, recibido, vuelto, pagos)
+  values (u.comercio_id, v_num, v_caja, u.id, u.nombre, v_sub, p_descuento, v_total, coalesce(p_recibido, 0), coalesce(p_vuelto, 0),
           (select coalesce(jsonb_agg(jsonb_build_object('medio', x->>'medio', 'monto', round((x->>'monto')::numeric, 2))), '[]')
            from jsonb_array_elements(p_pagos) x where (x->>'monto')::numeric > 0))
-  returning id, numero into v_id, v_num;
+  returning id into v_id;
 
   -- 3) Ítems, descuento de stock y movimientos
   for it in select * from jsonb_array_elements(p_items) loop
     v_cant := (it->>'cantidad')::numeric;
     if nullif(it->>'producto_id', '') is not null then
-      select * into p from productos where id = (it->>'producto_id')::uuid;
+      select * into p from productos where id = (it->>'producto_id')::uuid and comercio_id = u.comercio_id;
       insert into venta_items (venta_id, producto_id, nombre, codigo, categoria, cantidad, precio, costo, subtotal, alicuota_iva)
       values (v_id, p.id, p.nombre, p.codigo, p.categoria, v_cant, p.precio, p.costo, round(v_cant * p.precio, 2), p.alicuota_iva);
       v_costo_total := v_costo_total + v_cant * p.costo;
@@ -477,7 +670,7 @@ declare u perfiles; v ventas; i venta_items; v_nuevo numeric;
 begin
   u := _exigir_admin();
   if coalesce(trim(p_motivo), '') = '' then raise exception 'Indicá el motivo'; end if;
-  select * into v from ventas where id = p_venta for update;
+  select * into v from ventas where id = p_venta and comercio_id = u.comercio_id for update;
   if not found then raise exception 'La venta no existe'; end if;
   if v.estado = 'anulada' then raise exception 'La venta ya estaba anulada'; end if;
   if exists (select 1 from comprobantes where venta_id = p_venta and clase = 'factura')
@@ -488,7 +681,7 @@ begin
   update ventas set estado = 'anulada', motivo_anulacion = p_motivo, anulada_por = u.nombre, fecha_anulacion = now() where id = p_venta;
 
   for i in select * from venta_items where venta_id = p_venta and producto_id is not null order by producto_id loop
-    update productos set stock = stock + i.cantidad, actualizado = now() where id = i.producto_id returning stock into v_nuevo;
+    update productos set stock = stock + i.cantidad, actualizado = now() where id = i.producto_id and comercio_id = u.comercio_id returning stock into v_nuevo;
     if found then
       insert into movimientos_stock (producto_id, nombre, tipo, cantidad, stock_anterior, stock_nuevo, ref, motivo, usuario_nombre)
       values (i.producto_id, i.nombre, 'anulacion', i.cantidad, v_nuevo - i.cantidad, v_nuevo, 'Anulación venta #' || v.numero, p_motivo, u.nombre);
@@ -524,7 +717,7 @@ language plpgsql security definer set search_path = public as $$
 declare u perfiles; p productos; v_nuevo numeric;
 begin
   u := _exigir_admin();
-  select * into p from productos where id = p_producto for update;
+  select * into p from productos where id = p_producto and comercio_id = u.comercio_id for update;
   if not found then raise exception 'Producto inexistente'; end if;
   v_nuevo := case p_tipo
     when 'ajuste' then p_valor
@@ -542,16 +735,16 @@ end $$;
 -- Aumento/baja masiva por porcentaje. p_aplicar: 'precio' | 'costo' | 'ambos'
 create or replace function aumentar_precios(p_porcentaje numeric, p_categoria text, p_redondeo numeric, p_aplicar text) returns int
 language plpgsql security definer set search_path = public as $$
-declare n int; f numeric := 1 + p_porcentaje / 100;
+declare u perfiles; n int; f numeric := 1 + p_porcentaje / 100;
 begin
-  perform _exigir_admin();
+  u := _exigir_admin();
   update productos set
     precio = case when p_aplicar in ('precio','ambos') then
                case when coalesce(p_redondeo, 0) > 0 then ceil(precio * f / p_redondeo) * p_redondeo else round(precio * f, 2) end
              else precio end,
     costo  = case when p_aplicar in ('costo','ambos') then round(costo * f, 2) else costo end,
     actualizado = now()
-  where activo and (coalesce(p_categoria, '') = '' or categoria = p_categoria);
+  where comercio_id = u.comercio_id and activo and (coalesce(p_categoria, '') = '' or categoria = p_categoria);
   get diagnostics n = row_count;
   return n;
 end $$;
@@ -570,7 +763,7 @@ begin
         precio = coalesce((f->>'precio')::numeric, precio), stock_min = coalesce((f->>'stock_min')::numeric, stock_min),
         activo = coalesce((f->>'activo')::boolean, activo),
         alicuota_iva = coalesce((f->>'alicuota_iva')::numeric, alicuota_iva), actualizado = now()
-      where codigo = f->>'codigo' returning id into v_id;
+      where comercio_id = u.comercio_id and codigo = f->>'codigo' returning id into v_id;
     end if;
     if v_id is not null then
       actualizados := actualizados + 1;
@@ -608,11 +801,11 @@ declare
 begin
   u := _exigir_admin();
   perform _exigir_modulo('compras');
-  select * into prov from proveedores where id = (p->>'proveedor_id')::uuid;
+  select * into prov from proveedores where id = (p->>'proveedor_id')::uuid and comercio_id = u.comercio_id;
   if not found then raise exception 'Elegí el proveedor'; end if;
   if jsonb_array_length(coalesce(p->'items', '[]')) = 0 then raise exception 'La compra no tiene productos'; end if;
   if v_desde_caja then
-    select id into v_caja from cajas where estado = 'abierta';
+    select id into v_caja from cajas where comercio_id = u.comercio_id and estado = 'abierta';
     if v_caja is null then raise exception 'No hay caja abierta para pagar en efectivo'; end if;
   end if;
 
@@ -621,7 +814,7 @@ begin
     v_cant := (it->>'cantidad')::numeric;
     v_costo := coalesce((it->>'costo')::numeric, 0);
     if v_cant is null or v_cant <= 0 then continue; end if;
-    select * into pr from productos where id = (it->>'producto_id')::uuid for update;
+    select * into pr from productos where id = (it->>'producto_id')::uuid and comercio_id = u.comercio_id for update;
     if not found then continue; end if;
 
     update productos set
@@ -661,11 +854,11 @@ end $$;
 -- Cargar o corregir después los datos de la factura del proveedor (llega días después, se cargó mal, etc.)
 create or replace function datos_factura_compra(p_compra uuid, p_tipo text, p_numero text, p_iva numeric) returns void
 language plpgsql security definer set search_path = public as $$
-declare c compras; v_iva numeric := case when p_tipo = 'A' then round(coalesce(p_iva, 0), 2) else 0 end;
+declare u perfiles; c compras; v_iva numeric := case when p_tipo = 'A' then round(coalesce(p_iva, 0), 2) else 0 end;
 begin
-  perform _exigir_admin();
+  u := _exigir_admin();
   perform _exigir_modulo('compras');
-  select * into c from compras where id = p_compra for update;
+  select * into c from compras where id = p_compra and comercio_id = u.comercio_id for update;
   if not found then raise exception 'Compra inexistente'; end if;
   if p_tipo not in ('sin_factura', 'A', 'B', 'C') then raise exception 'Tipo de factura inválido'; end if;
   if v_iva < 0 or (v_iva > 0 and v_iva >= c.total) then raise exception 'El IVA de la factura no es válido'; end if;
@@ -689,7 +882,7 @@ begin
     raise exception 'Sólo podés registrar gastos pagados desde la caja';
   end if;
   if p_desde_caja and p_medio = 'efectivo' then
-    select id into v_caja from cajas where estado = 'abierta';
+    select id into v_caja from cajas where comercio_id = u.comercio_id and estado = 'abierta';
     if v_caja is null then raise exception 'La caja está cerrada'; end if;
   end if;
   insert into gastos (fecha, categoria, descripcion, monto, medio, caja_id, usuario_nombre)
@@ -710,7 +903,7 @@ language plpgsql security definer set search_path = public as $$
 declare u perfiles; v_id uuid;
 begin
   u := _perfil_activo();
-  if exists (select 1 from cajas where estado = 'abierta') then raise exception 'Ya hay una caja abierta'; end if;
+  if exists (select 1 from cajas where comercio_id = u.comercio_id and estado = 'abierta') then raise exception 'Ya hay una caja abierta'; end if;
   insert into cajas (abierta_por, abierta_por_nombre, monto_inicial)
   values (u.id, u.nombre, round(coalesce(p_monto, 0), 2)) returning id into v_id;
   return v_id;
@@ -721,7 +914,7 @@ language plpgsql security definer set search_path = public as $$
 declare u perfiles; v_caja uuid; v_id uuid;
 begin
   u := _perfil_activo();
-  select id into v_caja from cajas where estado = 'abierta';
+  select id into v_caja from cajas where comercio_id = u.comercio_id and estado = 'abierta';
   if v_caja is null then raise exception 'La caja está cerrada'; end if;
   insert into movimientos_caja (caja_id, tipo, monto, concepto, usuario_nombre)
   values (v_caja, p_tipo, round(p_monto, 2), coalesce(nullif(trim(p_concepto), ''), case p_tipo when 'ingreso' then 'Ingreso de efectivo' else 'Retiro de efectivo' end), u.nombre)
@@ -734,7 +927,7 @@ language plpgsql security definer set search_path = public as $$
 declare u perfiles; c cajas; v_por_medio jsonb; v_total numeric; v_cant int; v_ing numeric; v_egr numeric; v_esp numeric;
 begin
   u := _perfil_base(); -- sin chequear licencia: si vence con la caja abierta, igual se puede cerrar
-  select * into c from cajas where id = p_caja for update;
+  select * into c from cajas where id = p_caja and comercio_id = u.comercio_id for update;
   if not found or c.estado <> 'abierta' then raise exception 'La caja no está abierta'; end if;
 
   select coalesce(sum(total), 0), count(*) into v_total, v_cant from ventas where caja_id = p_caja and estado = 'completada';
@@ -754,24 +947,47 @@ begin
   return c;
 end $$;
 
+
+-- ---------------------------------------------------------------------
+-- CERTIFICADOS ARCA POR COMERCIO (cifrados en Supabase Vault)
+--   Sólo los usa el servidor con la clave secreta (service_role); el navegador nunca los ve.
+-- ---------------------------------------------------------------------
+create or replace function arca_guardar_credenciales(p_comercio uuid, p_cert text, p_key text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_id uuid; v_nombre text; v_valor text;
+begin
+  foreach v_nombre in array array['arca_cert_' || p_comercio, 'arca_key_' || p_comercio] loop
+    v_valor := case when v_nombre like 'arca_cert_%' then p_cert else p_key end;
+    select id into v_id from vault.secrets where name = v_nombre;
+    if v_id is null then
+      perform vault.create_secret(v_valor, v_nombre, 'Caja & Stock: certificado ARCA');
+    else
+      perform vault.update_secret(v_id, v_valor, v_nombre);
+    end if;
+  end loop;
+end $$;
+
+create or replace function arca_credenciales(p_comercio uuid) returns table (cert text, key text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return query select
+    (select decrypted_secret from vault.decrypted_secrets where name = 'arca_cert_' || p_comercio),
+    (select decrypted_secret from vault.decrypted_secrets where name = 'arca_key_' || p_comercio);
+end $$;
+
 -- ---------------------------------------------------------------------
 -- SEGURIDAD (Row Level Security)
---   Lecturas por políticas; las escrituras sensibles SÓLO por las funciones de arriba.
+--   Toda lectura filtra por el comercio del usuario. Las escrituras sensibles
+--   SÓLO por las funciones de arriba. (select f()) = se evalúa una vez por consulta.
 -- ---------------------------------------------------------------------
-alter table perfiles          enable row level security;
-alter table config            enable row level security;
-alter table proveedores       enable row level security;
-alter table productos         enable row level security;
-alter table cajas             enable row level security;
-alter table ventas            enable row level security;
-alter table venta_items       enable row level security;
-alter table movimientos_caja  enable row level security;
-alter table movimientos_stock enable row level security;
-alter table compras           enable row level security;
-alter table gastos            enable row level security;
-alter table comprobantes      enable row level security;
-alter table arca_ta           enable row level security;
-alter table licencia          enable row level security;
+do $$
+declare t text;
+begin
+  foreach t in array array['comercios','superadmins','invitaciones','perfiles','config','proveedores','productos','cajas',
+                           'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta'] loop
+    execute format('alter table %I enable row level security', t);
+  end loop;
+end $$;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public' loop
@@ -779,37 +995,53 @@ do $$ declare r record; begin
   end loop;
 end $$;
 
-create policy perfiles_sel on perfiles for select using (id = auth.uid() or es_admin());
-create policy perfiles_upd on perfiles for update using (es_admin() and id <> auth.uid()) with check (es_admin() and id <> auth.uid());
+-- comercios: el propio (plan, vencimiento) y el superadmin todos. Se modifican sólo por funciones.
+create policy comercios_sel on comercios for select using (id = (select mi_comercio()) or (select es_superadmin()));
+-- superadmins, invitaciones, arca_ta: sin políticas a propósito (sólo funciones / servidor)
 
-create policy config_sel on config for select using (es_activo());
-create policy config_upd on config for update using (es_admin() and licencia_activa()) with check (es_admin() and licencia_activa());
+create policy perfiles_sel on perfiles for select using (
+  id = auth.uid() or ((select es_admin()) and comercio_id = (select mi_comercio())));
+create policy perfiles_upd on perfiles for update
+  using ((select es_admin()) and comercio_id = (select mi_comercio()) and id <> auth.uid())
+  with check ((select es_admin()) and comercio_id = (select mi_comercio()) and id <> auth.uid());
 
-create policy proveedores_all on proveedores for all using (es_admin() and modulo_habilitado('proveedores')) with check (es_admin() and modulo_habilitado('proveedores'));
+create policy config_sel on config for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
+create policy config_upd on config for update
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select licencia_activa()))
+  with check (comercio_id = (select mi_comercio()) and (select es_admin()) and (select licencia_activa()));
 
-create policy productos_sel on productos for select using (es_activo());
+create policy proveedores_all on proveedores for all
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('proveedores')))
+  with check (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('proveedores')));
+
+create policy productos_sel on productos for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 -- el admin edita datos; el stock sólo cambia por funciones (ver trigger abajo)
-create policy productos_upd on productos for update using (es_admin() and licencia_activa()) with check (es_admin() and licencia_activa());
-create policy productos_del on productos for delete using (es_admin() and licencia_activa());
+create policy productos_upd on productos for update
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select licencia_activa()))
+  with check (comercio_id = (select mi_comercio()) and (select es_admin()) and (select licencia_activa()));
+create policy productos_del on productos for delete
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select licencia_activa()));
 
-create policy cajas_sel on cajas for select using (es_activo());
+create policy cajas_sel on cajas for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 -- vendedor: ventas de hoy (hora Argentina) y las de la caja abierta
 create policy ventas_sel on ventas for select using (
-  es_admin() or (es_activo() and (
+  comercio_id = (select mi_comercio()) and ((select es_admin()) or ((select es_activo()) and (
     fecha >= (date_trunc('day', now() at time zone 'America/Argentina/Buenos_Aires') at time zone 'America/Argentina/Buenos_Aires')
-    or caja_id in (select id from cajas where estado = 'abierta'))));
-create policy venta_items_sel on venta_items for select using (exists (select 1 from ventas v where v.id = venta_id));
-create policy movcaja_sel on movimientos_caja for select using (es_activo());
-create policy movstock_sel on movimientos_stock for select using (es_admin());
-create policy compras_sel on compras for select using (es_admin() and modulo_habilitado('compras'));
-create policy gastos_sel on gastos for select using (es_admin() and modulo_habilitado('gastos'));
-create policy comprobantes_sel on comprobantes for select using (exists (select 1 from ventas v where v.id = venta_id));
--- arca_ta: sin políticas a propósito (sólo el servidor con la clave secreta)
-create policy gastos_del on gastos for delete using (es_admin() and caja_id is null and modulo_habilitado('gastos'));
--- licencia: todos la leen (la app muestra el plan y el vencimiento); nadie la modifica desde el navegador
-create policy licencia_sel on licencia for select using (es_activo());
+    or caja_id in (select id from cajas where estado = 'abierta')))));
+create policy venta_items_sel on venta_items for select using (
+  comercio_id = (select mi_comercio()) and exists (select 1 from ventas v where v.id = venta_id));
+create policy movcaja_sel on movimientos_caja for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
+create policy movstock_sel on movimientos_stock for select using (comercio_id = (select mi_comercio()) and (select es_admin()));
+create policy compras_sel on compras for select
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('compras')));
+create policy gastos_sel on gastos for select
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('gastos')));
+create policy gastos_del on gastos for delete
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and caja_id is null and (select modulo_habilitado('gastos')));
+create policy comprobantes_sel on comprobantes for select using (
+  comercio_id = (select mi_comercio()) and exists (select 1 from ventas v where v.id = venta_id));
 
--- Evita que un UPDATE directo desde el cliente toque el stock (sólo funciones con movimiento)
+-- Evita que un UPDATE directo desde el cliente toque el stock o cambie una fila de comercio
 create or replace function _proteger_stock() returns trigger
 language plpgsql as $$
 begin
@@ -822,21 +1054,37 @@ end $$;
 drop trigger if exists proteger_stock on productos;
 create trigger proteger_stock before update on productos for each row execute function _proteger_stock();
 
--- Permisos de ejecución
+-- ---------------------------------------------------------------------
+-- PERMISOS DE EJECUCIÓN
+-- ---------------------------------------------------------------------
+-- Internas: nadie las llama directo desde el navegador
+revoke all on function _perfil_activo, _perfil_base, _exigir_admin, _exigir_superadmin, _exigir_modulo, _licencia_vigente,
+  _crear_comercio, _invitar, _nuevo_usuario from public, anon, authenticated;
+-- Credenciales ARCA: sólo el servidor
+revoke all on function arca_guardar_credenciales, arca_credenciales from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function arca_guardar_credenciales, arca_credenciales, mi_comercio to service_role;
+  end if;
+end $$;
+
 revoke all on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
-  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, _perfil_activo, _exigir_admin,
-  _perfil_base, _licencia_vigente, _exigir_modulo from public, anon;
+  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
+  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar from public, anon;
 grant execute on function registrar_venta, anular_venta, crear_producto, mover_stock, aumentar_precios, importar_productos,
-  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, es_activo, es_admin, modulo_habilitado, licencia_activa to authenticated;
+  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
+  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar,
+  es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;
 grant execute on function sistema_inicializado to anon, authenticated;
 
 -- ---------------------------------------------------------------------
--- TIEMPO REAL (la caja y el stock se actualizan solos en todas las pantallas)
+-- TIEMPO REAL (la caja y el stock se actualizan solos; cada usuario recibe sólo lo de su comercio por RLS)
 -- ---------------------------------------------------------------------
 do $$
 declare t text;
 begin
-  foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras','movimientos_stock','proveedores','comprobantes','licencia'] loop
+  foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras',
+                           'movimientos_stock','proveedores','comprobantes','comercios'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
     end if;

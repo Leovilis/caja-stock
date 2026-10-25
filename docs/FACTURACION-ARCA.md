@@ -50,20 +50,22 @@ openssl req -new -key cajastock.key -out cajastock.csr \
    *"Factura Electrónica – Monotributo – Web Services"* (monotributo) o *"RECE para aplicativo y web services"* (responsable inscripto).
    Anotá el número: es el que va en Configuración. **No uses el mismo punto de venta que el facturador en línea.**
 
-## 4. Cargar los secretos en el servidor
+## 4. Clave del servidor y certificado de cada comercio
 
-En **Vercel → Project → Settings → Environment Variables** (o en `.env.local` si lo corrés en tu servidor):
+**Una sola vez, en el servidor** (Vercel → Project → Settings → Environment Variables, o `.env.local`):
 
 | Variable | Valor |
 |---|---|
-| `SUPABASE_SECRET_KEY` | Supabase → Project Settings → API Keys → **Secret key** (`sb_secret_...`) |
-| `ARCA_CERT` | Contenido completo de `cajastock.crt` (incluidas las líneas `-----BEGIN/END CERTIFICATE-----`) |
-| `ARCA_KEY` | Contenido completo de `cajastock.key` |
+| `SUPABASE_SECRET_KEY` | Supabase → Project Settings → API Keys → **Secret key** (`sb_secret_...`). **Nunca** con prefijo `NEXT_PUBLIC_`. |
 
-Si tu panel no acepta varias líneas, pegá el archivo en base64: `base64 -w0 cajastock.crt` (en Mac: `base64 -i cajastock.crt`).
-Después de cargar o cambiar variables en Vercel, hacé un **Redeploy**.
+Después de cargarla en Vercel, hacé un **Redeploy**.
 
-Estas tres variables **nunca** llevan el prefijo `NEXT_PUBLIC_`: sólo las lee el servidor.
+**El certificado lo carga cada comercio** en la app: **Configuración → Facturación electrónica → Certificado digital**,
+eligiendo `cajastock.crt` y `cajastock.key`. Se guarda **cifrado en Supabase Vault**: ni el navegador ni los demás
+comercios pueden leerlo, sólo el servidor al facturar. La app verifica que la clave corresponda al certificado y que no esté vencido.
+
+> Compatibilidad: si el servidor tiene `ARCA_CERT` / `ARCA_KEY` (instalación anterior de un solo comercio), se usan
+> **sólo** para el comercio cuyo CUIT coincide con el del certificado y que todavía no cargó uno propio.
 
 ## 5. Configurar y probar
 
@@ -73,13 +75,15 @@ Estas tres variables **nunca** llevan el prefijo `NEXT_PUBLIC_`: sólo las lee e
    datos fiscales, certificado, servidores de ARCA, autenticación y numeración del punto de venta.
 3. Si sos Responsable Inscripto, revisá la **alícuota de IVA** de cada producto (por defecto 21 %). Los precios siguen siendo finales (IVA incluido).
 4. Hacé ventas de prueba y facturalas. Probá también anular una facturada (emite la nota de crédito).
-5. Cuando todo funcione: cargá el certificado de producción en `ARCA_CERT`, redeploy, cambiá el ambiente a **Producción** y el punto de venta al de producción.
+5. Cuando todo funcione: cargá el certificado de producción en **Configuración → Certificado digital**, cambiá el ambiente a **Producción** y el punto de venta al de producción.
 
 ## Problemas frecuentes
 
 | Mensaje | Qué hacer |
 |---|---|
-| *Falta la variable de entorno ARCA_CERT / ARCA_KEY / SUPABASE_SECRET_KEY* | Cargala en Vercel y hacé redeploy. |
+| *Falta SUPABASE_SECRET_KEY* | Cargala en Vercel y hacé redeploy. |
+| *Falta el certificado digital* | Cargalo en Configuración → Facturación electrónica → Certificado digital. |
+| *La facturación no está incluida en el plan básico* | El administrador general tiene que pasar el comercio a plan completo. |
 | *ARCA rechazó el certificado* | Certificado de otro ambiente, vencido, o sin autorización al servicio **wsfe**. |
 | *Ya hay un ticket de acceso vigente…* | Pasa si se borró la tabla `arca_ta` o se usó el mismo certificado desde otro sistema. Se libera solo en hasta 12 h. Lo ideal es usar un certificado exclusivo para este sistema. |
 | *10016: número de comprobante* | El sistema reintenta solo. Si persiste, otro sistema está usando el mismo punto de venta. |
@@ -94,5 +98,7 @@ Estas tres variables **nunca** llevan el prefijo `NEXT_PUBLIC_`: sólo las lee e
 - `src/lib/arca/servidor.ts`: valida usuario y datos, calcula importes, numera (último autorizado + 1, con reintento),
   pide el CAE y guarda el comprobante. El ticket de acceso (vale ~12 h) se guarda en la tabla `arca_ta`, invisible para el navegador.
 - `src/lib/arca/calculo.ts`: letra, IVA por alícuota (prorrateando descuentos, cuadra al centavo), validación de CUIT y QR.
-- Rutas: `POST /api/arca/facturar`, `POST /api/arca/anular`, `GET /api/arca/estado`. Corren en el servidor (región São Paulo en Vercel).
+- Rutas: `POST /api/arca/facturar`, `POST /api/arca/anular`, `GET /api/arca/estado`, `GET/POST /api/arca/certificado`. Corren en el servidor (región São Paulo en Vercel).
+- Multi-comercio: las rutas usan la clave secreta (sin RLS), así que **toda** consulta filtra por el `comercio_id` del usuario que llama;
+  el certificado de cada comercio se lee de Vault con `arca_credenciales()` (sólo `service_role`).
 - Una venta no se puede facturar dos veces (marca de "facturando" + índice único) y la base no deja anular una venta facturada sin su nota de crédito.

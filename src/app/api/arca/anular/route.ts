@@ -18,7 +18,13 @@ export async function POST(req: Request) {
     const { venta_id, motivo } = await req.json();
     if (!venta_id || !String(motivo ?? "").trim()) return Response.json({ error: "Indicá el motivo" }, { status: 400 });
 
-    const { data: fac } = await admin().from("comprobantes").select("id").eq("venta_id", venta_id).eq("clase", "factura").maybeSingle();
+    const { data: fac } = await admin()
+      .from("comprobantes")
+      .select("id")
+      .eq("venta_id", venta_id)
+      .eq("comercio_id", perfil.comercio_id)
+      .eq("clase", "factura")
+      .maybeSingle();
     const nota = fac ? await notaCreditoVenta(perfil, venta_id) : null;
 
     const { error } = await clienteUsuario(token).rpc("anular_venta", { p_venta: venta_id, p_motivo: String(motivo).trim() });

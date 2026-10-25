@@ -37,28 +37,38 @@ Webapp de punto de venta para kiosco/drugstore: **ventas en tiempo real con lect
    npm install
    npm run dev      # http://localhost:3000
    ```
-6. La primera vez, el login ofrece **crear el administrador** (el primer usuario registrado queda como admin).
-   Después, en *Usuarios*, das de alta a los vendedores. Si alguien se registra por su cuenta queda **inactivo** hasta que lo actives.
+6. La primera vez, el login ofrece **crear el administrador general**: ese usuario gestiona los clientes (*Clientes*) y además es dueño de su propio comercio con plan completo.
+   Después, en *Usuarios*, cada comercio da de alta a sus vendedores.
 7. Cargá productos a mano o con *Productos → Importar* (`productos-ejemplo.csv` sirve de plantilla).
 
-### Plan básico de prueba (para clientes)
+### Multi-comercio: una base para todos los clientes
 
-Cada cliente que prueba el sistema usa **su propio proyecto de Supabase y su propio deploy en Vercel**, ambos creados con **tu** cuenta (así el cliente no puede tocar la licencia).
+Una sola base de Supabase y un solo deploy sirven a todos los comercios. Cada fila tiene `comercio_id` y las políticas RLS hacen que cada usuario vea **sólo su comercio**; las funciones que mueven stock o plata también filtran por comercio.
+
+| Quién | Qué ve |
+|---|---|
+| **Administrador general** (vos) | Su comercio + la sección **Clientes**: alta de comercios, plan, vencimiento, suspensión, actividad (tickets y total de 30 días, última venta). **No** ve productos ni ventas de los clientes. |
+| **Admin de un comercio** | Todo lo de su comercio (según el plan) y alta de sus usuarios |
+| **Vendedor** | POS, caja, ventas del día y consulta de productos de su comercio |
+
+**Dar de alta un cliente:** *Clientes → Nuevo cliente* → nombre del comercio, nombre/email del dueño, contraseña inicial, plan y vencimiento. Le pasás la URL, el email y la contraseña. (Si dejás la contraseña vacía, el dueño entra a la app, toca **«¿Te invitaron a un comercio? Creá tu cuenta»** y se registra con ese email).
 
 | Plan | Incluye |
 |---|---|
-| `completo` (por defecto) | Todo |
 | `basico` | Punto de venta, Caja, Ventas, Productos, Stock, Usuarios y Configuración. **Sin** Inicio, Compras, Proveedores, Gastos, Reportes, Libro ni Facturación ARCA |
+| `completo` | Todo |
 
-1. Nuevo proyecto en Supabase → correr `supabase/schema.sql` y después `supabase/plan_basico.sql` (editá nombre, contacto y fecha de vencimiento).
-2. Nuevo proyecto en Vercel desde el mismo repo, con las variables de **ese** Supabase. No cargues `SUPABASE_SECRET_KEY` ni el certificado de ARCA.
-3. El cliente entra, crea su usuario administrador y empieza a usarlo.
+**Vencimiento:** los últimos 7 días aparece un aviso. Pasada la fecha (o si lo suspendés), ese comercio queda en **modo consulta**: ve todo y puede cerrar la caja abierta, pero no vende, no abre caja ni modifica productos o stock. Lo bloquea la base, no sólo la pantalla. Desde *Clientes* lo extendés (+30), lo pasás a completo o le sacás el vencimiento, y la app del cliente se actualiza sola.
 
-**Vencimiento:** los últimos 7 días aparece un aviso. Pasada la fecha, la app queda en **modo consulta**: se ve todo y se puede cerrar la caja que esté abierta, pero no se puede vender, abrir caja ni modificar productos o stock. Lo bloquea la base (no sólo la pantalla).
+**Si alguien se registra sin invitación** no ve nada: la cuenta queda sin comercio hasta que un admin la invite con ese email.
 
-**Si lo compra:** en el SQL Editor de su proyecto, `update licencia set plan = 'completo', vence = null;` (o sólo `vence = null` para dejarlo en básico). La app se actualiza sola, sin reinstalar y sin perder datos.
+**Facturación ARCA:** cada comercio con plan completo carga **su** certificado en *Configuración* (se guarda cifrado en Supabase Vault). El servidor necesita una sola variable: `SUPABASE_SECRET_KEY`. Ver [`docs/FACTURACION-ARCA.md`](docs/FACTURACION-ARCA.md).
 
-> El plan gratis de Supabase permite **2 proyectos activos** por organización. Para más clientes de prueba: otra organización en Supabase o plan Pro.
+**Pasar la base que ya tenías (un comercio) a multi-comercio:** backup → `supabase/migrar_a_multicomercio.sql` → `supabase/schema.sql`. Tus datos quedan en un comercio con el nombre de tu configuración y plan completo; tu usuario admin pasa a ser el administrador general. Los tickets siguen la numeración que tenían.
+
+**Scripts útiles:** `datos_prueba.sql` (carga 30 días de datos en tu comercio o en el que indiques) · `limpiar_datos.sql` (vacía UN comercio, indicando su nombre).
+
+> Con varios clientes conviene **Supabase Pro** (8 GB, backups diarios). Un kiosco de ~200 tickets/día usa ~180 MB por año.
 
 ### Deploy
 - **Vercel:** importar el repo y cargar las dos variables `NEXT_PUBLIC_SUPABASE_*`.
@@ -68,24 +78,31 @@ Cada cliente que prueba el sistema usa **su propio proyecto de Supabase y su pro
 ## Base de datos (PostgreSQL)
 
 ```
-perfiles           id (= auth.users), nombre, email, rol (admin|vendedor), activo
-config             fila única con datos del ticket y preferencias
-productos          nombre, codigo (único), categoria, marca, costo, precio, stock, stock_min, proveedor_id, activo, favorito
-ventas             numero (secuencia), fecha, subtotal, descuento, total, costo_total, pagos (jsonb), recibido, vuelto, caja_id, estado
+comercios          nombre, plan (basico|completo), vence, activo, contacto, notas, ultimo_ticket
+superadmins        user_id (administradores generales)
+invitaciones       email, comercio_id, rol (se consumen cuando la persona crea su cuenta)
+perfiles           id (= auth.users), comercio_id, nombre, email, rol (admin|vendedor), activo
+config             comercio_id (PK): datos del ticket, preferencias, categorías y datos fiscales
+productos          nombre, codigo (único por comercio), categoria, marca, costo, precio, stock, stock_min, proveedor_id, activo, favorito
+ventas             numero (correlativo por comercio), fecha, subtotal, descuento, total, costo_total, pagos (jsonb), recibido, vuelto, caja_id, estado
 venta_items        venta_id, producto_id, nombre, categoria, cantidad, precio, costo, subtotal
-cajas              estado (sólo una abierta), apertura, monto_inicial, cierre, por_medio, efectivo_esperado/contado, diferencia
+cajas              estado (una abierta por comercio), apertura, monto_inicial, cierre, por_medio, efectivo_esperado/contado, diferencia
 movimientos_caja   caja_id, tipo (ingreso|egreso), monto, concepto
 movimientos_stock  producto_id, tipo (venta|compra|ajuste|merma|vencido|anulacion|alta), cantidad, stock_anterior, stock_nuevo
 compras            proveedor, items (jsonb), total, medio, pagado_desde_caja
 gastos             fecha, categoria, descripcion, monto, medio, caja_id
 proveedores        nombre, contacto, telefono, email, cuit, dias_visita
+comprobantes       facturas y notas de crédito ARCA (CAE)
 ```
+Todas las tablas de un comercio llevan `comercio_id` (obligatorio, por defecto el del usuario logueado).
 
 **Funciones (RPC)** — toda operación que mueve stock o plata corre en una transacción en el servidor:
 `registrar_venta`, `anular_venta`, `crear_producto`, `mover_stock`, `aumentar_precios`, `importar_productos`,
-`registrar_compra`, `registrar_gasto`, `abrir_caja`, `movimiento_caja`, `cerrar_caja`.
+`registrar_compra`, `registrar_gasto`, `abrir_caja`, `movimiento_caja`, `cerrar_caja`, `invitar_usuario`.
+Administrador general: `admin_comercios`, `admin_crear_comercio`, `admin_actualizar_comercio`, `admin_invitar`.
 
 **Seguridad (RLS)**
+- Cada usuario ve y modifica **sólo su comercio** (todas las políticas filtran por `comercio_id`; las funciones también, porque corren sin RLS).
 - Vendedor: ve productos, la caja y las ventas del día; vende, abre/cierra caja y carga gastos pagados desde la caja. No ve costos de compras, gastos ni movimientos de stock, y no puede editar productos.
 - Admin: todo. Igual, el stock no se puede pisar con un UPDATE directo (un trigger lo impide): sólo cambia por movimientos auditados.
 - La venta toma **precios y costos de la base**, no del navegador; si cambió un precio mientras se cobraba, la venta se rechaza con aviso.
@@ -95,7 +112,7 @@ proveedores        nombre, contacto, telefono, email, cuit, dias_visita
 - El costo se guarda **en cada ítem vendido**: la ganancia histórica no cambia al actualizar costos.
 - Las **compras de mercadería no son gastos** (ya están en el costo de lo vendido). Resultado neto = ventas − costo de lo vendido − gastos operativos.
 - El stock sólo cambia por movimientos auditados (venta, compra, ajuste, anulación).
-- Una sola caja abierta a la vez (un puesto de cobro), garantizado por un índice único.
+- Una sola caja abierta a la vez por comercio (un puesto de cobro), garantizado por un índice único.
 - Las listas se traen paginando de a 1000 filas (límite por defecto de Supabase), así los reportes de meses con muchos tickets salen completos.
 
 ## Facturación electrónica
