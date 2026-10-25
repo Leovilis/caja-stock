@@ -56,12 +56,17 @@ export function parseCSV(texto: string): Record<string, string>[] {
   return rest.map((r) => Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? "").trim()])));
 }
 
-/** "1.234,50" | "1234.50" | "$ 1.234" -> 1234.5 */
+/** "1.234,50" | "1234.50" | "$ 1.234" | "1.400" -> número (punto de miles como en es-AR) */
 export function parseNumero(s: string | undefined): number {
   if (!s) return 0;
   let v = s.replace(/[^\d,.-]/g, "");
   if (v.includes(",") && v.includes(".")) v = v.replace(/\./g, "").replace(",", ".");
   else if (v.includes(",")) v = v.replace(",", ".");
+  else if (v.includes(".")) {
+    // "1.400" o "12.500.000" = miles; "1234.5" / "99.90" = decimales
+    const partes = v.split(".");
+    if (partes.length > 2 || partes[partes.length - 1].length === 3) v = v.replace(/\./g, "");
+  }
   const n = parseFloat(v);
   return isNaN(n) ? 0 : n;
 }

@@ -9,7 +9,7 @@ import { isoDate, parseIsoDate } from "@/lib/format";
 import type { Producto } from "@/lib/types";
 import { Field, Modal } from "./ui";
 
-type Origen = "cambiados" | "todos" | "favoritos";
+type Origen = "seleccion" | "cambiados" | "todos" | "favoritos";
 
 /** Elegir e imprimir cenefas (etiquetas de precio para la góndola) */
 export function CenefasModal({
@@ -18,6 +18,7 @@ export function CenefasModal({
   productos,
   categorias,
   desdeInicial,
+  soloIds,
 }: {
   open: boolean;
   onClose: () => void;
@@ -25,6 +26,8 @@ export function CenefasModal({
   categorias: string[];
   /** si viene, arranca en "precios cambiados desde" esa fecha (ej: después de un aumento) */
   desdeInicial?: string;
+  /** productos elegidos (tildados o recién actualizados) */
+  soloIds?: string[];
 }) {
   const { config } = useApp();
   const [origen, setOrigen] = useState<Origen>("cambiados");
@@ -39,11 +42,16 @@ export function CenefasModal({
   useEffect(() => {
     if (!open) return;
     setQuitados(new Set());
-    if (desdeInicial) {
+    if (soloIds?.length) {
+      setOrigen("seleccion");
+      setCat("");
+    } else if (desdeInicial) {
       setOrigen("cambiados");
       setDesde(desdeInicial);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, desdeInicial]);
+  const ids = useMemo(() => new Set(soloIds ?? []), [soloIds]);
 
   const candidatos = useMemo(() => {
     const ini = parseIsoDate(desde).getTime();
@@ -51,10 +59,16 @@ export function CenefasModal({
       .filter((p) => p.activo && p.precio > 0)
       .filter((p) => !cat || p.categoria === cat)
       .filter((p) =>
-        origen === "favoritos" ? p.favorito : origen === "cambiados" ? new Date(p.precio_desde ?? p.actualizado ?? 0).getTime() >= ini : true
+        origen === "seleccion"
+          ? ids.has(p.id)
+          : origen === "favoritos"
+            ? p.favorito
+            : origen === "cambiados"
+              ? new Date(p.precio_desde ?? p.actualizado ?? 0).getTime() >= ini
+              : true
       )
       .sort((a, b) => a.categoria.localeCompare(b.categoria) || a.nombre.localeCompare(b.nombre));
-  }, [productos, origen, desde, cat]);
+  }, [productos, origen, desde, cat, ids]);
   const elegidos = candidatos.filter((p) => !quitados.has(p.id));
 
   const alternar = (id: string) =>
@@ -70,6 +84,7 @@ export function CenefasModal({
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="¿Cuáles?">
           <select className="input" value={origen} onChange={(e) => setOrigen(e.target.value as Origen)}>
+            {!!soloIds?.length && <option value="seleccion">Los {soloIds.length} elegidos</option>}
             <option value="cambiados">Precios cambiados desde…</option>
             <option value="todos">Todos los productos</option>
             <option value="favoritos">Sólo favoritos</option>

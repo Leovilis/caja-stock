@@ -6,13 +6,14 @@ import { Download, Edit, Plus, Star, TrendingUp, Upload, PackageMinus, Trash2, T
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
-import { aumentarPrecios, actualizarProducto, crearProducto, eliminarProducto, importarProductos, type ProductoInput } from "@/lib/db";
+import { actualizarProducto, crearProducto, eliminarProducto, importarProductos, type ProductoInput } from "@/lib/db";
 import { money, number, margen, round2, pct, isoDate } from "@/lib/format";
 import { descargarCSV, parseCSV, parseNumero } from "@/lib/csv";
 import type { Producto, Proveedor } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, NumInput, PageHeader } from "@/components/ui";
 import { AjusteStockModal } from "@/components/AjusteStockModal";
 import { CenefasModal } from "@/components/CenefasModal";
+import { PreciosModal } from "@/components/PreciosModal";
 import { ALICUOTAS } from "@/lib/arca/calculo";
 
 const norm = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -28,7 +29,16 @@ export default function ProductosPage() {
   const [editando, setEditando] = useState<Producto | null | "nuevo">(null);
   const [ajustando, setAjustando] = useState<Producto | null>(null);
   const [masivo, setMasivo] = useState(false);
-  const [cenefas, setCenefas] = useState<{ desde?: string } | null>(null);
+  const [cenefas, setCenefas] = useState<{ desde?: string; ids?: string[] } | null>(null);
+  const [tildados, setTildados] = useState<Set<string>>(new Set());
+  const seleccion = useMemo(() => productos.filter((p) => tildados.has(p.id)), [productos, tildados]);
+  const tildar = (id: string) =>
+    setTildados((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function eliminar(p: Producto) {
@@ -123,9 +133,9 @@ export default function ProductosPage() {
         {esAdmin && (
           <>
             <button className="btn-ghost" onClick={() => setMasivo(true)}>
-              <TrendingUp size={16} /> Actualizar precios
+              <TrendingUp size={16} /> Actualizar precios{tildados.size > 0 && ` (${tildados.size})`}
             </button>
-            <button className="btn-ghost" onClick={() => setCenefas({})}>
+            <button className="btn-ghost" onClick={() => setCenefas(tildados.size ? { ids: [...tildados] } : {})}>
               <Tags size={16} /> Cenefas
             </button>
             <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
@@ -159,6 +169,26 @@ export default function ProductosPage() {
         </select>
       </div>
 
+      {esAdmin && tildados.size > 0 && (
+        <div className="card mb-4 flex flex-wrap items-center gap-2 border-brand-100 bg-brand-50 p-3 text-sm">
+          <b>{tildados.size} tildados</b>
+          <button className="btn-primary btn-sm" onClick={() => setMasivo(true)}>
+            <TrendingUp size={14} /> Cambiar precio por %
+          </button>
+          <button className="btn-ghost btn-sm" onClick={() => setCenefas({ ids: [...tildados] })}>
+            <Tags size={14} /> Cenefas
+          </button>
+          <button className="ml-auto text-xs text-slate-500 hover:text-brand-600" onClick={() => setTildados(new Set())}>
+            Quitar selección
+          </button>
+        </div>
+      )}
+      {esAdmin && tildados.size === 0 && (
+        <p className="mb-2 text-xs text-slate-500">
+          Tip: buscá (ej. «coca»), tildá todos con la casilla del encabezado y cambiá el precio de todos juntos.
+        </p>
+      )}
+
       <div className="card overflow-x-auto">
         {cargando ? (
           <Loading />
@@ -168,6 +198,22 @@ export default function ProductosPage() {
           <table className="table">
             <thead>
               <tr>
+                {esAdmin && (
+                  <th className="w-8">
+                    <input
+                      type="checkbox"
+                      title="Tildar todos los que se ven"
+                      checked={lista.length > 0 && lista.every((p) => tildados.has(p.id))}
+                      onChange={(e) =>
+                        setTildados((s) => {
+                          const n = new Set(s);
+                          lista.forEach((p) => (e.target.checked ? n.add(p.id) : n.delete(p.id)));
+                          return n;
+                        })
+                      }
+                    />
+                  </th>
+                )}
                 <th></th>
                 <th>Código</th>
                 <th>Producto</th>
@@ -181,7 +227,12 @@ export default function ProductosPage() {
             </thead>
             <tbody>
               {lista.map((p) => (
-                <tr key={p.id} className={p.activo ? "" : "opacity-50"}>
+                <tr key={p.id} className={`${p.activo ? "" : "opacity-50"} ${tildados.has(p.id) ? "bg-brand-50" : ""}`}>
+                  {esAdmin && (
+                    <td>
+                      <input type="checkbox" checked={tildados.has(p.id)} onChange={() => tildar(p.id)} />
+                    </td>
+                  )}
                   <td>
                     <button
                       disabled={!esAdmin}
@@ -238,14 +289,25 @@ export default function ProductosPage() {
         productos={productos}
       />
       <AjusteStockModal producto={ajustando} onClose={() => setAjustando(null)} />
-      <MasivoModal
+      <PreciosModal
         open={masivo}
         onClose={() => setMasivo(false)}
-        onAplicado={() => setCenefas({ desde: isoDate(new Date()) })}
-        productos={productos.filter((p) => p.activo)}
+        onAplicado={(ids) => {
+          setTildados(new Set());
+          setCenefas({ ids, desde: isoDate(new Date()) });
+        }}
+        productos={productos}
+        seleccion={seleccion}
         categorias={categorias}
       />
-      <CenefasModal open={!!cenefas} onClose={() => setCenefas(null)} productos={productos} categorias={categorias} desdeInicial={cenefas?.desde} />
+      <CenefasModal
+        open={!!cenefas}
+        onClose={() => setCenefas(null)}
+        productos={productos}
+        categorias={categorias}
+        desdeInicial={cenefas?.desde}
+        soloIds={cenefas?.ids}
+      />
     </div>
   );
 }
@@ -449,89 +511,3 @@ function ProductoModal({
   );
 }
 
-function MasivoModal({
-  open,
-  onClose,
-  onAplicado,
-  productos,
-  categorias,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onAplicado: () => void; // después de cambiar precios: ofrecer las cenefas
-  productos: Producto[];
-  categorias: string[];
-}) {
-  const [porc, setPorc] = useState(10);
-  const [cat, setCat] = useState("");
-  const [aplicar, setAplicar] = useState<"precio" | "costo" | "ambos">("ambos");
-  const [redondeo, setRedondeo] = useState(10);
-  const [enviando, setEnviando] = useState(false);
-  const afectados = productos.filter((p) => !cat || p.categoria === cat);
-  const ejemplo = afectados[0];
-
-  return (
-    <Modal open={open} onClose={onClose} title="Actualización masiva de precios" size="md">
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Porcentaje (+ aumento / − baja)">
-            <NumInput value={porc} onChange={setPorc} />
-          </Field>
-          <Field label="Categoría">
-            <select className="input" value={cat} onChange={(e) => setCat(e.target.value)}>
-              <option value="">Todas</option>
-              {categorias.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Aplicar a">
-            <select className="input" value={aplicar} onChange={(e) => setAplicar(e.target.value as typeof aplicar)}>
-              <option value="ambos">Costo y precio</option>
-              <option value="precio">Sólo precio de venta</option>
-              <option value="costo">Sólo costo</option>
-            </select>
-          </Field>
-          <Field label="Redondear precio a">
-            <select className="input" value={redondeo} onChange={(e) => setRedondeo(Number(e.target.value))}>
-              <option value={0}>Sin redondeo</option>
-              <option value={10}>$10</option>
-              <option value={50}>$50</option>
-              <option value={100}>$100</option>
-            </select>
-          </Field>
-        </div>
-        <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-          Afecta a <b>{afectados.length}</b> productos.
-          {ejemplo && aplicar !== "costo" && (
-            <>
-              {" "}
-              Ej: {ejemplo.nombre} {money(ejemplo.precio)} →{" "}
-              <b>{money(redondeo ? Math.ceil((ejemplo.precio * (1 + porc / 100)) / redondeo) * redondeo : ejemplo.precio * (1 + porc / 100))}</b>
-            </>
-          )}
-        </div>
-        <button
-          className="btn-primary w-full"
-          disabled={enviando || !afectados.length || !porc}
-          onClick={async () => {
-            if (!confirm(`¿Aplicar ${porc}% a ${afectados.length} productos?`)) return;
-            setEnviando(true);
-            try {
-              await aumentarPrecios(porc, cat, redondeo, aplicar);
-              toast.success("Precios actualizados. Imprimí las cenefas nuevas.");
-              onClose();
-              if (aplicar !== "costo") onAplicado();
-            } catch (e) {
-              toast.error((e as Error).message);
-            } finally {
-              setEnviando(false);
-            }
-          }}
-        >
-          Aplicar
-        </button>
-      </div>
-    </Modal>
-  );
-}

@@ -907,6 +907,74 @@ begin
   return n;
 end $$;
 
+-- Actualización masiva por porcentaje sobre una selección o filtros.
+-- p: {ids?: [uuid], categoria?, marca?, porcentaje, redondeo, aplicar: 'precio'|'costo'|'ambos'}
+--    con ids sólo toca esos productos; si no, los activos que cumplan categoría y marca.
+create or replace function actualizar_precios(p jsonb) returns int
+language plpgsql security definer set search_path = public as $$
+declare
+  u perfiles; n int;
+  v_porc numeric := coalesce((p->>'porcentaje')::numeric, 0);
+  f numeric := 1 + v_porc / 100;
+  v_red numeric := coalesce((p->>'redondeo')::numeric, 0);
+  v_apl text := coalesce(p->>'aplicar', 'precio');
+  v_ids uuid[] := case when jsonb_typeof(p->'ids') = 'array'
+                       then array(select jsonb_array_elements_text(p->'ids')::uuid) end;
+begin
+  u := _exigir_admin();
+  if v_porc = 0 then raise exception 'Indicá el porcentaje'; end if;
+  if v_porc <= -100 then raise exception 'El porcentaje no puede bajar el precio a cero'; end if;
+  if v_apl not in ('precio', 'costo', 'ambos') then raise exception 'Opción inválida'; end if;
+  if v_ids is not null and cardinality(v_ids) = 0 then raise exception 'No elegiste productos'; end if;
+  update productos set
+    precio = case when v_apl in ('precio','ambos') then
+               case when v_red > 0 then ceil(precio * f / v_red) * v_red else round(precio * f, 2) end
+             else precio end,
+    costo  = case when v_apl in ('costo','ambos') then round(costo * f, 2) else costo end,
+    actualizado = now()
+  where comercio_id = u.comercio_id
+    and (case when v_ids is not null then id = any(v_ids)
+              else activo and (coalesce(p->>'categoria', '') = '' or categoria = p->>'categoria')
+                          and (coalesce(p->>'marca', '') = '' or marca = p->>'marca') end);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- Planilla de precios: [{id?, codigo?, costo?, precio?}] — busca por id y si no por código;
+-- sólo cambia costo/precio. Devuelve {actualizados, sin_cambios, no_encontrados: [...]}.
+create or replace function importar_precios(p_filas jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  u perfiles; f jsonb; pr productos; v_costo numeric; v_precio numeric;
+  actualizados int := 0; sin_cambios int := 0; no_encontrados jsonb := '[]';
+begin
+  u := _exigir_admin();
+  if jsonb_typeof(p_filas) <> 'array' then raise exception 'Planilla inválida'; end if;
+  for f in select * from jsonb_array_elements(p_filas) loop
+    pr := null;
+    if nullif(f->>'id', '') is not null then
+      select * into pr from productos where comercio_id = u.comercio_id and id::text = f->>'id';
+    end if;
+    if pr.id is null and nullif(f->>'codigo', '') is not null then
+      select * into pr from productos where comercio_id = u.comercio_id and codigo = f->>'codigo';
+    end if;
+    if pr.id is null then
+      no_encontrados := no_encontrados || to_jsonb(coalesce(nullif(f->>'codigo', ''), f->>'id', '?'));
+      continue;
+    end if;
+    v_costo  := coalesce((f->>'costo')::numeric, pr.costo);
+    v_precio := coalesce((f->>'precio')::numeric, pr.precio);
+    if v_costo < 0 or v_precio < 0 then raise exception 'Precio o costo negativo en "%"', pr.nombre; end if;
+    if v_costo = pr.costo and v_precio = pr.precio then
+      sin_cambios := sin_cambios + 1;
+    else
+      update productos set costo = round(v_costo, 2), precio = round(v_precio, 2), actualizado = now() where id = pr.id;
+      actualizados := actualizados + 1;
+    end if;
+  end loop;
+  return jsonb_build_object('actualizados', actualizados, 'sin_cambios', sin_cambios, 'no_encontrados', no_encontrados);
+end $$;
+
 -- Importación CSV: si el código existe actualiza datos; si no, crea.
 create or replace function importar_productos(p_filas jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -1245,10 +1313,10 @@ do $$ begin
   end if;
 end $$;
 
-revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, importar_productos,
+revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave from public, anon;
-grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, importar_productos,
+grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
   registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave,
   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;

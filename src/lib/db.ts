@@ -114,6 +114,20 @@ export const moverStock = (productoId: string, tipo: "ajuste" | "compra" | "merm
 export const aumentarPrecios = (porcentaje: number, categoria: string, redondeo: number, aplicar: "precio" | "costo" | "ambos") =>
   rpc<number>("aumentar_precios", { p_porcentaje: porcentaje, p_categoria: categoria, p_redondeo: redondeo, p_aplicar: aplicar });
 
+/** % sobre una selección (ids) o sobre los activos de una categoría/marca */
+export const actualizarPrecios = (p: {
+  ids?: string[];
+  categoria?: string;
+  marca?: string;
+  porcentaje: number;
+  redondeo: number;
+  aplicar: "precio" | "costo" | "ambos";
+}) => rpc<number>("actualizar_precios", { p });
+
+/** Planilla de precios: sólo cambia costo/precio (busca por id y si no por código) */
+export const importarPrecios = (filas: { id?: string; codigo?: string; costo?: number; precio?: number }[]) =>
+  rpc<{ actualizados: number; sin_cambios: number; no_encontrados: string[] }>("importar_precios", { p_filas: filas });
+
 export const importarProductos = (filas: Partial<ProductoInput>[]) =>
   rpc<{ creados: number; actualizados: number }>("importar_productos", { p_filas: filas });
 
