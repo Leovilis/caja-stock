@@ -103,7 +103,12 @@ export default function ReportesPage() {
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Ventas" value={money(r.total)} tone="blue" hint={`${r.tickets} tickets · prom. ${money(r.ticketPromedio)}`} />
-            <Stat label="Ganancia bruta" value={money(r.ganancia)} tone="green" hint={`Margen ${pct(r.margen)} · Costo ${money(r.costo)}`} />
+            <Stat
+              label="Ganancia bruta"
+              value={money(r.ganancia)}
+              tone="green"
+              hint={`Margen ${pct(r.margen)} · Costo ${money(r.costo)}${r.comisiones ? ` · Comisiones ${money(r.comisiones)}` : ""}`}
+            />
             <Stat label="Gastos" value={money(gTotal)} tone="red" hint={`${gastos.length} registros`} />
             <Stat label="Resultado neto" value={money(neto)} tone={neto >= 0 ? "green" : "red"} hint="Ganancia bruta − gastos" />
           </div>
@@ -123,8 +128,11 @@ export default function ReportesPage() {
             <h3 className="mb-3 font-semibold">Estado de resultados</h3>
             <table className="table max-w-xl">
               <tbody>
-                <tr><td>Ventas netas</td><td className="text-right tabular-nums">{money(r.total)}</td></tr>
+                <tr><td>Ventas netas{r.recargos !== 0 && <span className="text-xs text-slate-500"> (incluye {money(r.recargos)} de recargos/descuentos por medio de pago)</span>}</td><td className="text-right tabular-nums">{money(r.total)}</td></tr>
                 <tr><td>(−) Costo de mercadería vendida</td><td className="text-right tabular-nums text-rose-600">{money(r.costo)}</td></tr>
+                {r.comisiones > 0 && (
+                  <tr><td>(−) Comisiones de cobro (QR, tarjetas)</td><td className="text-right tabular-nums text-rose-600">{money(r.comisiones)}</td></tr>
+                )}
                 <tr className="font-semibold"><td>= Ganancia bruta</td><td className="text-right tabular-nums">{money(r.ganancia)}</td></tr>
                 {gastosCat.map(([c, v]) => (
                   <tr key={c} className="text-sm text-slate-500"><td className="pl-6">(−) {c}</td><td className="text-right tabular-nums">{money(v)}</td></tr>

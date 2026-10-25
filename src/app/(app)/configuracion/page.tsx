@@ -7,7 +7,9 @@ import { certificadoArca, estadoArca, subirCertificadoArca, type InfoCertificado
 import { useApp } from "@/context/AppContext";
 import { guardarConfig } from "@/lib/db";
 import { imprimirTicket } from "@/lib/ticket";
-import type { Config, Venta } from "@/lib/types";
+import type { Config, MedioConfig, Venta } from "@/lib/types";
+import { comisionDe, conRecargo, mediosDe } from "@/lib/types";
+import { money } from "@/lib/format";
 import { Field, NumInput, PageHeader } from "@/components/ui";
 import { ALICUOTAS, cuitValido } from "@/lib/arca/calculo";
 
@@ -115,6 +117,13 @@ export default function ConfigPage() {
             <input className="input" value={f.pie_ticket} onChange={(e) => set("pie_ticket", e.target.value)} />
           </Field>
         </div>
+
+        <MediosPagoCard
+          medios={f.medios_pago}
+          alias={f.alias_transferencia}
+          onMedios={(v) => set("medios_pago", v)}
+          onAlias={(v) => set("alias_transferencia", v)}
+        />
 
         <div className="card grid gap-4 p-5 sm:grid-cols-2">
           <h3 className="font-semibold sm:col-span-2">Caja e impresión</h3>
@@ -313,6 +322,83 @@ function CertificadoArca() {
       <button type="button" className="btn-ghost btn-sm mt-2" onClick={subir} disabled={subiendo || !cert || !key}>
         {subiendo ? "Guardando…" : info?.cargado ? "Reemplazar certificado" : "Guardar certificado"}
       </button>
+    </div>
+  );
+}
+
+/** Recargo/descuento al cliente y comisión del procesador por medio de pago, más alias para transferencias */
+function MediosPagoCard({
+  medios,
+  alias,
+  onMedios,
+  onAlias,
+}: {
+  medios: MedioConfig[];
+  alias: string;
+  onMedios: (v: MedioConfig[]) => void;
+  onAlias: (v: string) => void;
+}) {
+  const filas = mediosDe({ medios_pago: medios });
+  const cambiar = (id: string, cambio: Partial<MedioConfig>) => {
+    const nuevas = filas.map((m) => (m.id === id ? { ...m, ...cambio } : m));
+    if (!nuevas.some((m) => m.activo)) return toast.error("Tiene que quedar al menos un medio de pago activo");
+    onMedios(nuevas.map(({ id, activo, recargo, comision }) => ({ id, activo, recargo, comision })));
+  };
+  const transferencia = filas.find((m) => m.id === "transferencia");
+
+  return (
+    <div className="card p-5">
+      <h3 className="font-semibold">Medios de pago</h3>
+      <p className="mb-3 text-xs text-slate-500">
+        <b>Recargo</b>: lo que le sumás al cliente por pagar con ese medio (negativo = descuento, ej. −5 en efectivo). <b>Comisión</b>: lo que te retiene el procesador
+        (Mercado Pago, posnet), sin IVA. Revisá tus condiciones reales en el panel de cada uno. Con esto la caja cobra el monto correcto y los reportes muestran tu
+        ganancia real.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Medio</th>
+              <th className="text-center">Activo</th>
+              <th className="w-32">Recargo / desc. %</th>
+              <th className="w-32">Comisión % (sin IVA)</th>
+              <th className="text-right">Con IVA</th>
+              <th className="text-right">De $1.000 te quedan</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((m) => {
+              const cobrado = conRecargo(1000, m);
+              const neto = cobrado - comisionDe(cobrado, m);
+              const tono = neto >= 1000 ? "text-emerald-600" : neto >= 970 ? "text-amber-600" : "text-rose-600";
+              return (
+                <tr key={m.id} className={m.activo ? "" : "opacity-50"}>
+                  <td className="font-medium">{m.label}</td>
+                  <td className="text-center">
+                    <input type="checkbox" checked={m.activo} onChange={(e) => cambiar(m.id, { activo: e.target.checked })} />
+                  </td>
+                  <td>
+                    <NumInput className="input py-1 text-right" placeholder="0" value={m.recargo} onChange={(n) => cambiar(m.id, { recargo: Math.max(-50, Math.min(100, n)) })} />
+                  </td>
+                  <td>
+                    <NumInput className="input py-1 text-right" placeholder="0" value={m.comision} onChange={(n) => cambiar(m.id, { comision: Math.max(0, Math.min(50, n)) })} />
+                  </td>
+                  <td className="text-right tabular-nums text-slate-500">{(m.comision * 1.21).toFixed(2).replace(".", ",")} %</td>
+                  <td className={`text-right font-semibold tabular-nums ${tono}`}>{money(neto)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        Verde: el recargo cubre la comisión. Ámbar: perdés hasta 3 %. Rojo: perdés más. La comisión se calcula con IVA (21 %).
+      </p>
+      {transferencia?.activo && (
+        <Field label="Alias / CBU para transferencias (se muestra al cobrar)" className="mt-4 max-w-md">
+          <input className="input" value={alias} onChange={(e) => onAlias(e.target.value)} placeholder="ej: kiosco.la.esquina" />
+        </Field>
+      )}
     </div>
   );
 }

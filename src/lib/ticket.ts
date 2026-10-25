@@ -64,7 +64,9 @@ export function imprimirTicket(v: Venta, cfg: Config) {
     <table>${filas}</table>
     <hr/>
     <table>
-      ${v.descuento ? `<tr><td>Subtotal</td><td class="r">${money(v.subtotal)}</td></tr><tr><td>Descuento</td><td class="r">-${money(v.descuento)}</td></tr>` : ""}
+      ${v.descuento || v.recargo ? `<tr><td>Subtotal</td><td class="r">${money(v.subtotal)}</td></tr>` : ""}
+      ${v.descuento ? `<tr><td>Descuento</td><td class="r">-${money(v.descuento)}</td></tr>` : ""}
+      ${v.recargo ? `<tr><td>${Number(v.recargo) > 0 ? "Recargo" : "Desc."} medio de pago</td><td class="r">${Number(v.recargo) > 0 ? "" : "-"}${money(Math.abs(Number(v.recargo)))}</td></tr>` : ""}
       <tr class="b big"><td>TOTAL</td><td class="r">${money(v.total)}</td></tr>
     </table>
     <hr/>

@@ -231,10 +231,22 @@ export default function VentasPage() {
                     <td className="text-right">{money(p.monto)}</td>
                   </tr>
                 ))}
+                {!!detalle.recargo && (
+                  <tr className="text-sm text-slate-500">
+                    <td>{Number(detalle.recargo) > 0 ? "Incluye recargo" : "Incluye descuento"} por medio de pago</td>
+                    <td className="text-right">{money(detalle.recargo)}</td>
+                  </tr>
+                )}
+                {esAdmin && !!detalle.comision && (
+                  <tr className="text-sm text-slate-500">
+                    <td>Comisión de cobro (estimada)</td>
+                    <td className="text-right">-{money(detalle.comision)}</td>
+                  </tr>
+                )}
                 {esAdmin && (
                   <tr className="text-sm text-slate-500">
-                    <td>Ganancia bruta</td>
-                    <td className="text-right">{money(detalle.total - detalle.costo_total)}</td>
+                    <td>Ganancia</td>
+                    <td className="text-right">{money(detalle.total - detalle.costo_total - Number(detalle.comision || 0))}</td>
                   </tr>
                 )}
               </tbody>

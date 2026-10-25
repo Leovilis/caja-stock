@@ -211,6 +211,6 @@ export function calcularResumen(caja: Pick<Caja, "monto_inicial">, ventas: Venta
     ingresos,
     egresos,
     efectivoEsperado: round2(Number(caja.monto_inicial) + (porMedio.efectivo ?? 0) + ingresos - egresos),
-    ganancia: round2(ok.reduce((a, v) => a + Number(v.total) - Number(v.costo_total), 0)),
+    ganancia: round2(ok.reduce((a, v) => a + Number(v.total) - Number(v.costo_total) - Number(v.comision || 0), 0)),
   };
 }

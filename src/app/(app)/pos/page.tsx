@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { abrirCaja, registrarVenta, type ItemCarrito } from "@/lib/db";
 import { money, round2, number } from "@/lib/format";
 import { imprimirTicket } from "@/lib/ticket";
-import { MEDIOS_PAGO, MedioPago, Pago, Producto, Venta, facturacionConfigurada } from "@/lib/types";
+import { MEDIOS_PAGO, MedioPago, Pago, Producto, Venta, facturacionConfigurada, comisionDe, conRecargo, mediosDe, type MedioConfig } from "@/lib/types";
 import { FacturarModal } from "@/components/FacturarModal";
 
 interface CarritoItem extends ItemCarrito {
@@ -209,6 +209,11 @@ export default function POSPage() {
   const subtotal = round2(carrito.reduce((a, i) => a + i.subtotal, 0));
   const total = round2(Math.max(0, subtotal - descuento));
   const unidades = carrito.reduce((a, i) => a + i.cantidad, 0);
+  const medios = useMemo(() => mediosDe(config), [config]);
+  const costoTicket = useMemo(() => {
+    const porId = new Map(productos.map((p) => [p.id, Number(p.costo)]));
+    return round2(carrito.reduce((a, i) => a + (i.producto_id ? (porId.get(i.producto_id) ?? 0) * i.cantidad : 0), 0));
+  }, [carrito, productos]);
 
   function vaciar() {
     setCarrito([]);
@@ -386,7 +391,15 @@ export default function POSPage() {
         </div>
       </section>
 
-      <CobroModal open={cobrando} total={total} onClose={() => { setCobrando(false); foco(); }} onConfirm={confirmarVenta} />
+      <CobroModal
+        open={cobrando}
+        total={total}
+        costo={costoTicket}
+        medios={medios}
+        alias={config.alias_transferencia}
+        onClose={() => { setCobrando(false); foco(); }}
+        onConfirm={confirmarVenta}
+      />
 
       <FacturarModal venta={facturando} onClose={() => { setFacturando(null); foco(); }} onListo={() => setUltimaFacturada(true)} />
 
@@ -459,47 +472,73 @@ function AbrirCajaInline() {
 function CobroModal({
   open,
   total,
+  costo,
+  medios,
+  alias,
   onClose,
   onConfirm,
 }: {
   open: boolean;
-  total: number;
+  total: number; // total del ticket (antes del recargo por medio de pago)
+  costo: number; // costo de la mercadería del ticket (para avisar si queda a pérdida)
+  medios: (MedioConfig & { label: string })[];
+  alias: string;
   onClose: () => void;
   onConfirm: (pagos: Pago[], recibido: number, vuelto: number) => Promise<void>;
 }) {
-  const [medio, setMedio] = useState<MedioPago>("efectivo");
+  const activos = medios.filter((m) => m.activo);
+  const inicial = (activos.find((m) => m.id === "efectivo") ?? activos[0])?.id ?? "efectivo";
+  const vacio = () => Object.fromEntries(MEDIOS_PAGO.map((m) => [m.id, 0])) as Record<MedioPago, number>;
+  const [medio, setMedio] = useState<MedioPago>(inicial);
   const [recibido, setRecibido] = useState(0);
   const [dividido, setDividido] = useState(false);
-  const [pagos, setPagos] = useState<Record<MedioPago, number>>({ efectivo: 0, debito: 0, credito: 0, transferencia: 0, qr: 0 });
+  const [pagos, setPagos] = useState<Record<MedioPago, number>>(vacio);
   const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setMedio("efectivo");
+      setMedio(inicial);
       setRecibido(0);
       setDividido(false);
-      setPagos({ efectivo: 0, debito: 0, credito: 0, transferencia: 0, qr: 0 });
+      setPagos(vacio());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  const cfg = (id: MedioPago) => medios.find((m) => m.id === id);
+  // partes del ticket que paga cada medio (sin recargo) y lo que efectivamente se cobra con cada uno
+  const partes: [MedioPago, number][] = dividido
+    ? (Object.entries(pagos) as [MedioPago, number][]).filter(([, v]) => v > 0)
+    : [[medio, total]];
+  const cobrados = partes.map(([m, base]) => ({ m, base, cobrado: conRecargo(base, cfg(m)) }));
+  const aCobrar = round2(cobrados.reduce((a, c) => a + c.cobrado, 0));
+  const ajuste = round2(aCobrar - (dividido ? cobrados.reduce((a, c) => a + c.base, 0) : total));
+  const comision = round2(cobrados.reduce((a, c) => a + comisionDe(c.cobrado, cfg(c.m)), 0));
+  const teQueda = round2(aCobrar - comision);
+
   const sumaDiv = round2(Object.values(pagos).reduce((a, b) => a + b, 0));
-  const efectivoAplicado = dividido ? pagos.efectivo : medio === "efectivo" ? total : 0;
+  const efectivoAplicado = cobrados.find((c) => c.m === "efectivo")?.cobrado ?? 0;
   const recibidoReal = recibido || efectivoAplicado;
   const vuelto = efectivoAplicado > 0 ? round2(Math.max(0, recibidoReal - efectivoAplicado)) : 0;
   const falta = dividido ? round2(total - sumaDiv) : 0;
-  const valido = dividido ? Math.abs(falta) < 0.01 : medio !== "efectivo" || recibidoReal >= total;
+  const valido = dividido ? Math.abs(falta) < 0.01 : medio !== "efectivo" || recibidoReal >= aCobrar;
+  const perdida = costo > 0 && teQueda < costo;
+  const usaTransferencia = cobrados.some((c) => c.m === "transferencia");
 
   async function confirmar() {
     if (!valido || enviando) return;
     setEnviando(true);
-    const lista: Pago[] = dividido
-      ? (Object.entries(pagos) as [MedioPago, number][]).filter(([, v]) => v > 0).map(([m, v]) => ({ medio: m, monto: v }))
-      : [{ medio, monto: total }];
-    await onConfirm(lista, efectivoAplicado > 0 ? recibidoReal : 0, vuelto);
+    // se mandan las partes del ticket: la base calcula recargo y comisión con la configuración del comercio
+    await onConfirm(
+      partes.map(([m, base]) => ({ medio: m, monto: base })),
+      efectivoAplicado > 0 ? recibidoReal : 0,
+      vuelto
+    );
     setEnviando(false);
   }
 
-  const billetes = [1000, 2000, 5000, 10000, 20000].filter((b) => b >= total * 0.2);
+  const etiquetaRecargo = (m: MedioConfig) => (m.recargo ? `${m.recargo > 0 ? "+" : "−"}${Math.abs(m.recargo)}%` : "");
+  const billetes = [1000, 2000, 5000, 10000, 20000].filter((b) => b >= aCobrar * 0.2);
 
   return (
     <Modal open={open} onClose={onClose} title="Cobrar" size="md">
@@ -513,18 +552,25 @@ function CobroModal({
       >
         <div className="mb-4 rounded-xl bg-slate-900 p-4 text-center text-white">
           <div className="text-xs uppercase tracking-wider text-slate-400">Total a cobrar</div>
-          <div className="text-4xl font-bold tabular-nums">{money(total)}</div>
+          <div className="text-4xl font-bold tabular-nums">{money(aCobrar)}</div>
+          {ajuste !== 0 && (
+            <div className="mt-1 text-xs text-slate-300">
+              Ticket {money(dividido ? sumaDiv : total)} {ajuste > 0 ? "+ recargo" : "− descuento"} {money(Math.abs(ajuste))}
+            </div>
+          )}
         </div>
 
-        <label className="mb-3 flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={dividido} onChange={(e) => setDividido(e.target.checked)} />
-          Pago dividido (varios medios)
-        </label>
+        {activos.length > 1 && (
+          <label className="mb-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={dividido} onChange={(e) => setDividido(e.target.checked)} />
+            Pago dividido (varios medios)
+          </label>
+        )}
 
         {!dividido ? (
           <>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-              {MEDIOS_PAGO.map((m) => (
+              {activos.map((m) => (
                 <button
                   key={m.id}
                   onClick={() => setMedio(m.id)}
@@ -533,16 +579,17 @@ function CobroModal({
                   }`}
                 >
                   {m.label}
+                  {m.recargo !== 0 && <div className={m.recargo > 0 ? "text-rose-600" : "text-emerald-600"}>{etiquetaRecargo(m)}</div>}
                 </button>
               ))}
             </div>
             {medio === "efectivo" && (
               <div className="mt-4 space-y-2">
                 <Field label="Paga con">
-                  <NumInput value={recibido} onChange={setRecibido} autoFocus placeholder={String(total)} className="input text-xl" />
+                  <NumInput value={recibido} onChange={setRecibido} autoFocus placeholder={String(aCobrar)} className="input text-xl" />
                 </Field>
                 <div className="flex flex-wrap gap-2">
-                  <button className="btn-ghost btn-sm" onClick={() => setRecibido(total)}>
+                  <button className="btn-ghost btn-sm" onClick={() => setRecibido(aCobrar)}>
                     Exacto
                   </button>
                   {billetes.map((b) => (
@@ -556,9 +603,12 @@ function CobroModal({
           </>
         ) : (
           <div className="space-y-2">
-            {MEDIOS_PAGO.map((m) => (
+            <p className="text-xs text-slate-500">Cargá qué parte del ticket paga cada medio; el recargo se suma solo.</p>
+            {activos.map((m) => (
               <div key={m.id} className="flex items-center gap-2">
-                <span className="w-36 text-sm">{m.label}</span>
+                <span className="w-36 text-sm">
+                  {m.label} {m.recargo !== 0 && <span className="text-xs text-slate-500">{etiquetaRecargo(m)}</span>}
+                </span>
                 <NumInput value={pagos[m.id]} placeholder="0" onChange={(n) => setPagos((p) => ({ ...p, [m.id]: n }))} />
                 <button
                   className="btn-ghost btn-sm whitespace-nowrap"
@@ -566,6 +616,9 @@ function CobroModal({
                 >
                   Resto
                 </button>
+                {m.recargo !== 0 && pagos[m.id] > 0 && (
+                  <span className="w-28 text-right text-xs tabular-nums text-slate-600">cobrar {money(conRecargo(pagos[m.id], m))}</span>
+                )}
               </div>
             ))}
             <div className={`text-right text-sm font-medium ${falta === 0 ? "text-emerald-600" : "text-rose-600"}`}>
@@ -573,9 +626,29 @@ function CobroModal({
             </div>
             {pagos.efectivo > 0 && (
               <Field label="Efectivo entregado por el cliente">
-                <NumInput value={recibido} onChange={setRecibido} placeholder={String(pagos.efectivo)} />
+                <NumInput value={recibido} onChange={setRecibido} placeholder={String(efectivoAplicado)} />
               </Field>
             )}
+          </div>
+        )}
+
+        {usaTransferencia && alias && (
+          <div className="mt-4 flex items-center justify-between gap-2 rounded-xl bg-brand-50 p-3">
+            <div>
+              <div className="text-xs uppercase text-brand-700">Transferir a</div>
+              <div className="text-xl font-bold text-brand-700">{alias}</div>
+            </div>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => {
+                navigator.clipboard?.writeText(alias).then(
+                  () => toast.success("Alias copiado"),
+                  () => toast.error("No se pudo copiar")
+                );
+              }}
+            >
+              Copiar
+            </button>
           </div>
         )}
 
@@ -583,6 +656,13 @@ function CobroModal({
           <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-center">
             <div className="text-xs uppercase text-emerald-700">Vuelto</div>
             <div className="text-3xl font-bold text-emerald-700 tabular-nums">{money(vuelto)}</div>
+          </div>
+        )}
+
+        {perdida && (
+          <div className="mt-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
+            Con este medio de pago la venta queda <b>a pérdida</b>: la mercadería cuesta {money(costo)} y, descontando la comisión ({money(comision)}), te quedan{" "}
+            {money(teQueda)}.
           </div>
         )}
 

@@ -233,6 +233,13 @@ create table if not exists vencimientos (
 );
 alter table config add column if not exists dias_aviso_vencimiento int not null default 7;
 
+-- Medios de pago: [{id, activo, recargo (% al cliente, negativo = descuento), comision (% sin IVA que cobra el procesador)}]
+-- vacío = todos activos, sin recargo ni comisión
+alter table config add column if not exists medios_pago jsonb not null default '[]';
+alter table config add column if not exists alias_transferencia text not null default '';
+alter table ventas add column if not exists recargo  numeric(14,2) not null default 0;  -- recargo/descuento por medio de pago (incluido en total)
+alter table ventas add column if not exists comision numeric(14,2) not null default 0;  -- comisión estimada de los procesadores (con IVA)
+
 -- Cenefas: desde cuándo rige el precio actual (para imprimir sólo las que cambiaron)
 alter table productos add column if not exists precio_desde timestamptz;
 update productos set precio_desde = coalesce(actualizado, creado, now()) where precio_desde is null;
@@ -677,7 +684,7 @@ declare
   u perfiles; cfg config; v_caja uuid; v_id uuid; v_num bigint;
   it jsonb; p productos; v_cant numeric; v_precio numeric;
   v_sub numeric := 0; v_costo_total numeric := 0; v_total numeric; v_pagado numeric; v_nuevo numeric;
-  r record;
+  r record; v_recargo numeric := 0; v_comision numeric := 0; v_pagos jsonb := '[]'; v_rec numeric; v_cobrado numeric;
 begin
   u := _perfil_activo();
   select * into cfg from config where comercio_id = u.comercio_id;
@@ -721,12 +728,32 @@ begin
     raise exception 'Los precios cambiaron: el total actual es %. Revisá el ticket y cobrá de nuevo.', v_total;
   end if;
 
+  -- 1b) Recargo/descuento y comisión según el medio de pago (configuración del comercio).
+  --     p_pagos trae la parte del ticket que paga cada medio; se guarda lo efectivamente cobrado.
+  for r in
+    select x->>'medio' as medio, round((x->>'monto')::numeric, 2) as base,
+           coalesce((m->>'activo')::boolean, true) as activo,
+           coalesce((m->>'recargo')::numeric, 0) as recargo,
+           coalesce((m->>'comision')::numeric, 0) as comision
+    from jsonb_array_elements(coalesce(p_pagos, '[]')) x
+    left join lateral (select m from jsonb_array_elements(coalesce(cfg.medios_pago, '[]')) m where m->>'id' = x->>'medio' limit 1) mm on true
+    where (x->>'monto')::numeric > 0
+  loop
+    if r.medio not in ('efectivo', 'debito', 'credito', 'transferencia', 'qr') then raise exception 'Medio de pago inválido'; end if;
+    if not r.activo then raise exception 'El medio de pago "%" está desactivado', r.medio; end if;
+    v_rec := round(r.base * r.recargo / 100, 2);
+    v_cobrado := r.base + v_rec;
+    v_recargo := v_recargo + v_rec;
+    v_comision := v_comision + round(v_cobrado * r.comision * 1.21 / 100, 2);   -- comisión + IVA 21 %
+    v_pagos := v_pagos || jsonb_build_object('medio', r.medio, 'monto', v_cobrado, 'recargo', v_rec);
+  end loop;
+
   -- 2) Registra la venta con el próximo número de ticket DEL COMERCIO (el UPDATE bloquea la fila: sin saltos ni repetidos)
   update comercios set ultimo_ticket = ultimo_ticket + 1 where id = u.comercio_id returning ultimo_ticket into v_num;
-  insert into ventas (comercio_id, numero, caja_id, usuario_id, usuario_nombre, subtotal, descuento, total, recibido, vuelto, pagos)
-  values (u.comercio_id, v_num, v_caja, u.id, u.nombre, v_sub, p_descuento, v_total, coalesce(p_recibido, 0), coalesce(p_vuelto, 0),
-          (select coalesce(jsonb_agg(jsonb_build_object('medio', x->>'medio', 'monto', round((x->>'monto')::numeric, 2))), '[]')
-           from jsonb_array_elements(p_pagos) x where (x->>'monto')::numeric > 0))
+  insert into ventas (comercio_id, numero, caja_id, usuario_id, usuario_nombre, subtotal, descuento, recargo, total, comision,
+                      recibido, vuelto, pagos)
+  values (u.comercio_id, v_num, v_caja, u.id, u.nombre, v_sub, p_descuento, v_recargo, v_total + v_recargo, v_comision,
+          coalesce(p_recibido, 0), coalesce(p_vuelto, 0), v_pagos)
   returning id into v_id;
 
   -- 3) Ítems, descuento de stock y movimientos

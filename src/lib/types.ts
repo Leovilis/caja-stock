@@ -58,8 +58,30 @@ export interface VentaItem {
 
 export interface Pago {
   medio: MedioPago;
-  monto: number;
+  monto: number; // lo cobrado con ese medio (incluye su recargo)
+  recargo?: number;
 }
+
+/** Configuración de un medio de pago del comercio */
+export interface MedioConfig {
+  id: MedioPago;
+  activo: boolean;
+  recargo: number; // % que se le suma al cliente (negativo = descuento)
+  comision: number; // % sin IVA que retiene el procesador
+}
+
+/** Los 5 medios en orden, con lo configurado (o los valores por defecto) */
+export function mediosDe(cfg: { medios_pago?: Partial<MedioConfig>[] }): (MedioConfig & { label: string })[] {
+  return MEDIOS_PAGO.map((m) => {
+    const c = (cfg.medios_pago ?? []).find((x) => x.id === m.id) ?? {};
+    return { id: m.id, label: m.label, activo: c.activo ?? true, recargo: Number(c.recargo ?? 0), comision: Number(c.comision ?? 0) };
+  });
+}
+
+/** Lo que se le cobra al cliente por pagar `base` con ese medio */
+export const conRecargo = (base: number, m?: Pick<MedioConfig, "recargo">) => Math.round(base * (1 + (m?.recargo ?? 0) / 100) * 100) / 100;
+/** Comisión estimada (con IVA 21 %) sobre lo cobrado */
+export const comisionDe = (cobrado: number, m?: Pick<MedioConfig, "comision">) => Math.round(((cobrado * (m?.comision ?? 0) * 1.21) / 100) * 100) / 100;
 
 export interface Venta {
   id: string;
@@ -67,8 +89,10 @@ export interface Venta {
   fecha: string;
   subtotal: number;
   descuento: number;
+  recargo?: number; // recargo/descuento por medio de pago (incluido en total)
   total: number;
   costo_total: number;
+  comision?: number; // comisión estimada de los procesadores
   pagos: Pago[];
   recibido: number;
   vuelto: number;
@@ -223,6 +247,8 @@ export interface Config {
   fiscal_ambiente: "homologacion" | "produccion";
   alicuota_varios: number;
   dias_aviso_vencimiento: number;
+  medios_pago: MedioConfig[];
+  alias_transferencia: string;
 }
 
 export const CONFIG_DEFAULT: Config = {
@@ -246,6 +272,8 @@ export const CONFIG_DEFAULT: Config = {
   fiscal_ambiente: "homologacion",
   alicuota_varios: 21,
   dias_aviso_vencimiento: 7,
+  medios_pago: [],
+  alias_transferencia: "",
 };
 
 /** ¿Están cargados los datos mínimos para facturar? */

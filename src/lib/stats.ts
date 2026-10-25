@@ -14,7 +14,10 @@ export function analizarVentas(ventasTodas: Venta[]) {
   const total = round2(ventas.reduce((a, v) => a + v.total, 0));
   const costo = round2(ventas.reduce((a, v) => a + v.costo_total, 0));
   const descuentos = round2(ventas.reduce((a, v) => a + (v.descuento || 0), 0));
-  const ganancia = round2(total - costo);
+  const recargos = round2(ventas.reduce((a, v) => a + Number(v.recargo || 0), 0));
+  const comisiones = round2(ventas.reduce((a, v) => a + Number(v.comision || 0), 0));
+  // ganancia real: lo cobrado (incluye recargos) − costo de la mercadería − comisiones de cobro
+  const ganancia = round2(total - costo - comisiones);
 
   const porMedio: Record<string, number> = {};
   const porCategoria: Record<string, { total: number; ganancia: number; cantidad: number }> = {};
@@ -32,14 +35,14 @@ export function analizarVentas(ventasTodas: Venta[]) {
     const k = isoDate(d);
     porDia[k] ??= { total: 0, ganancia: 0, tickets: 0 };
     porDia[k].total += v.total;
-    porDia[k].ganancia += v.total - v.costo_total;
+    porDia[k].ganancia += v.total - v.costo_total - Number(v.comision || 0);
     porDia[k].tickets += 1;
     porVendedor[v.usuario_nombre] ??= { total: 0, tickets: 0 };
     porVendedor[v.usuario_nombre].total += v.total;
     porVendedor[v.usuario_nombre].tickets += 1;
 
-    // el descuento se prorratea entre los ítems
-    const factor = v.subtotal > 0 ? v.total / v.subtotal : 1;
+    // el descuento se prorratea entre los ítems (el recargo por medio de pago no es venta de mercadería)
+    const factor = v.subtotal > 0 ? (v.total - Number(v.recargo || 0)) / v.subtotal : 1;
     for (const it of v.venta_items) {
       const neto = it.subtotal * factor;
       const gan = neto - it.costo * it.cantidad;
@@ -63,6 +66,8 @@ export function analizarVentas(ventasTodas: Venta[]) {
     costo,
     ganancia,
     descuentos,
+    recargos,
+    comisiones,
     margen: total > 0 ? (ganancia / total) * 100 : 0,
     tickets: ventas.length,
     ticketPromedio: ventas.length ? total / ventas.length : 0,
