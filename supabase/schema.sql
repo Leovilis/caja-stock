@@ -241,6 +241,29 @@ alter table config add column if not exists alias_transferencia text not null de
 alter table ventas add column if not exists recargo  numeric(14,2) not null default 0;  -- recargo/descuento por medio de pago (incluido en total)
 alter table ventas add column if not exists comision numeric(14,2) not null default 0;  -- comisión estimada de los procesadores (con IVA)
 
+-- Cuenta corriente con proveedores: cuánto se pagó de cada compra "a cuenta corriente" y los pagos
+alter table compras add column if not exists pagado numeric(14,2) not null default 0;
+alter table compras add column if not exists vence date;              -- vencimiento de la factura del proveedor
+update compras set pagado = total where medio <> 'cuenta_corriente' and pagado <> total;  -- las de contado ya están pagas
+create table if not exists pagos_proveedor (
+  id                uuid primary key default gen_random_uuid(),
+  comercio_id       uuid,
+  fecha             timestamptz not null default now(),
+  proveedor_id      uuid references proveedores(id) on delete set null,
+  proveedor_nombre  text not null,
+  medio             text not null check (medio in ('efectivo', 'transferencia', 'otro')),
+  total             numeric(14,2) not null check (total > 0),
+  a_cuenta          numeric(14,2) not null default 0 check (a_cuenta >= 0),  -- parte no asignada a facturas (anticipo)
+  aplicaciones      jsonb not null default '[]',                              -- [{compra_id, comprobante, fecha, monto}]
+  notas             text not null default '',
+  caja_id           uuid references cajas(id),
+  usuario_nombre    text not null,
+  anulado           timestamptz,
+  anulado_por       text,
+  motivo_anulacion  text
+);
+alter table movimientos_caja add column if not exists pago_proveedor_id uuid;
+
 -- Mercado Pago (cobro con QR automático): cuenta conectada y cobros generados.
 -- El access token NO está acá: se guarda cifrado en Vault (mp_guardar_token).
 create table if not exists mp_cuentas (
@@ -388,7 +411,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['perfiles','config','proveedores','productos','cajas','ventas','venta_items',
-                           'movimientos_caja','movimientos_stock','compras','gastos','comprobantes','vencimientos'] loop
+                           'movimientos_caja','movimientos_stock','compras','gastos','comprobantes','vencimientos','pagos_proveedor'] loop
     execute format('alter table %I add column if not exists comercio_id uuid', t);
     if t not in ('perfiles', 'config') then
       execute format('alter table %I alter column comercio_id set default mi_comercio()', t);
@@ -411,6 +434,8 @@ create index if not exists movimientos_stock_fecha_idx2 on movimientos_stock (co
 create index if not exists compras_fecha_idx2 on compras (comercio_id, fecha desc);
 create index if not exists gastos_fecha_idx2 on gastos (comercio_id, fecha desc);
 create index if not exists vencimientos_pend_idx on vencimientos (comercio_id, estado, vence);
+create index if not exists pagos_proveedor_idx on pagos_proveedor (comercio_id, fecha desc);
+create index if not exists compras_cc_idx on compras (comercio_id, proveedor_id) where medio = 'cuenta_corriente';
 
 -- ---------------------------------------------------------------------
 -- PLAN Y VENCIMIENTO (por comercio)
@@ -1149,9 +1174,12 @@ begin
   if v_fac_tipo <> 'A' then v_fac_iva := 0; end if;
   if v_fac_iva < 0 or (v_fac_iva > 0 and v_fac_iva >= v_total) then raise exception 'El IVA de la factura no es válido'; end if;
 
-  insert into compras (id, proveedor_id, proveedor_nombre, comprobante, items, total, medio, pagado_desde_caja, usuario_nombre, fac_tipo, fac_iva)
+  insert into compras (id, proveedor_id, proveedor_nombre, comprobante, items, total, medio, pagado_desde_caja, usuario_nombre, fac_tipo, fac_iva,
+                       pagado, vence)
   values (v_id, prov.id, prov.nombre, coalesce(p->>'comprobante', ''), v_items, v_total, p->>'medio', v_desde_caja, u.nombre,
-          v_fac_tipo, round(v_fac_iva, 2));
+          v_fac_tipo, round(v_fac_iva, 2),
+          case when p->>'medio' = 'cuenta_corriente' then 0 else v_total end,   -- a cuenta corriente queda debiendo
+          case when p->>'medio' = 'cuenta_corriente' then nullif(p->>'vence', '')::date end);
 
   if v_desde_caja and v_total > 0 then
     insert into movimientos_caja (caja_id, tipo, monto, concepto, usuario_nombre, compra_id)
@@ -1172,6 +1200,78 @@ begin
   if p_tipo not in ('sin_factura', 'A', 'B', 'C') then raise exception 'Tipo de factura inválido'; end if;
   if v_iva < 0 or (v_iva > 0 and v_iva >= c.total) then raise exception 'El IVA de la factura no es válido'; end if;
   update compras set fac_tipo = p_tipo, fac_iva = v_iva, comprobante = coalesce(p_numero, '') where id = p_compra;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- PAGOS A PROVEEDORES (cuenta corriente)
+-- ---------------------------------------------------------------------
+-- p: {proveedor_id, medio: 'efectivo'|'transferencia'|'otro', aplicaciones: [{compra_id, monto}], a_cuenta, notas}
+--    Efectivo sale de la caja abierta (egreso). Cada monto no puede superar lo que se debe de esa compra.
+create or replace function registrar_pago_proveedor(p jsonb) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  u perfiles; prov proveedores; c compras; a jsonb; v_monto numeric; v_caja uuid; v_id uuid := gen_random_uuid();
+  v_apl jsonb := '[]'; v_suma numeric := 0; v_a_cuenta numeric := round(coalesce((p->>'a_cuenta')::numeric, 0), 2);
+  v_medio text := coalesce(p->>'medio', 'transferencia'); v_total numeric;
+begin
+  u := _exigir_admin();
+  perform _exigir_modulo('compras');
+  select * into prov from proveedores where id = (p->>'proveedor_id')::uuid and comercio_id = u.comercio_id;
+  if not found then raise exception 'Elegí el proveedor'; end if;
+  if v_medio not in ('efectivo', 'transferencia', 'otro') then raise exception 'Método de pago inválido'; end if;
+  if v_a_cuenta < 0 then raise exception 'El pago a cuenta no puede ser negativo'; end if;
+
+  for a in select * from jsonb_array_elements(coalesce(p->'aplicaciones', '[]')) order by value->>'compra_id' loop
+    v_monto := round(coalesce((a->>'monto')::numeric, 0), 2);
+    if v_monto <= 0 then continue; end if;
+    select * into c from compras where id = (a->>'compra_id')::uuid and comercio_id = u.comercio_id for update;
+    if not found or c.proveedor_id is distinct from prov.id or c.medio <> 'cuenta_corriente' then
+      raise exception 'Una de las facturas no es de este proveedor o no está a cuenta corriente';
+    end if;
+    if v_monto > c.total - c.pagado + 0.005 then
+      raise exception 'A la factura % le quedan % por pagar (querés aplicar %)', coalesce(nullif(c.comprobante, ''), to_char(c.fecha, 'DD/MM')), c.total - c.pagado, v_monto;
+    end if;
+    update compras set pagado = pagado + v_monto where id = c.id;
+    v_apl := v_apl || jsonb_build_array(jsonb_build_object('compra_id', c.id, 'comprobante', c.comprobante, 'fecha', c.fecha, 'monto', v_monto));
+    v_suma := v_suma + v_monto;
+  end loop;
+
+  v_total := v_suma + v_a_cuenta;
+  if v_total <= 0 then raise exception 'Indicá cuánto pagás (a facturas o a cuenta)'; end if;
+
+  if v_medio = 'efectivo' then
+    select id into v_caja from cajas where comercio_id = u.comercio_id and estado = 'abierta';
+    if v_caja is null then raise exception 'Para pagar en efectivo tiene que haber una caja abierta'; end if;
+    insert into movimientos_caja (caja_id, tipo, monto, concepto, usuario_nombre, pago_proveedor_id)
+    values (v_caja, 'egreso', v_total, 'Pago a proveedor: ' || prov.nombre, u.nombre, v_id);
+  end if;
+
+  insert into pagos_proveedor (id, proveedor_id, proveedor_nombre, medio, total, a_cuenta, aplicaciones, notas, caja_id, usuario_nombre)
+  values (v_id, prov.id, prov.nombre, v_medio, v_total, v_a_cuenta, v_apl, coalesce(trim(p->>'notas'), ''), v_caja, u.nombre);
+  return v_id;
+end $$;
+
+-- Anula un pago: las facturas vuelven a deber lo que se les había aplicado.
+-- Si fue en efectivo y la caja sigue abierta, se quita el egreso; si ya se cerró, el arqueo de ese día queda como estaba.
+create or replace function anular_pago_proveedor(p_pago uuid, p_motivo text) returns void
+language plpgsql security definer set search_path = public as $$
+declare u perfiles; pg pagos_proveedor; a jsonb;
+begin
+  u := _exigir_admin();
+  perform _exigir_modulo('compras');
+  if coalesce(trim(p_motivo), '') = '' then raise exception 'Indicá el motivo'; end if;
+  select * into pg from pagos_proveedor where id = p_pago and comercio_id = u.comercio_id for update;
+  if not found then raise exception 'Pago inexistente'; end if;
+  if pg.anulado is not null then raise exception 'El pago ya estaba anulado'; end if;
+  for a in select * from jsonb_array_elements(pg.aplicaciones) order by value->>'compra_id' loop
+    update compras set pagado = greatest(0, pagado - (a->>'monto')::numeric)
+    where id = (a->>'compra_id')::uuid and comercio_id = u.comercio_id;
+  end loop;
+  if pg.caja_id is not null then
+    delete from movimientos_caja m using cajas cj
+    where m.pago_proveedor_id = pg.id and cj.id = m.caja_id and cj.estado = 'abierta';
+  end if;
+  update pagos_proveedor set anulado = now(), anulado_por = u.nombre, motivo_anulacion = trim(p_motivo) where id = pg.id;
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -1317,7 +1417,7 @@ declare t text;
 begin
   foreach t in array array['comercios','superadmins','invitaciones','perfiles','config','proveedores','productos','cajas',
                            'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta',
-                           'vencimientos','mp_cuentas','mp_cobros'] loop
+                           'vencimientos','mp_cuentas','mp_cobros','pagos_proveedor'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;
@@ -1371,6 +1471,8 @@ create policy gastos_sel on gastos for select
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('gastos')));
 create policy gastos_del on gastos for delete
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and caja_id is null and (select modulo_habilitado('gastos')));
+create policy pagos_proveedor_sel on pagos_proveedor for select
+  using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('compras')));
 create policy mp_cuentas_sel on mp_cuentas for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 create policy mp_cobros_sel on mp_cobros for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 create policy vencimientos_sel on vencimientos for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
@@ -1417,10 +1519,10 @@ do $$ begin
 end $$;
 
 revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
-  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
+  registrar_pago_proveedor, anular_pago_proveedor, registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave from public, anon;
 grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
-  registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
+  registrar_pago_proveedor, anular_pago_proveedor, registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
   admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave,
   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;
 grant execute on function sistema_inicializado to anon, authenticated;
@@ -1432,7 +1534,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras',
-                           'movimientos_stock','proveedores','comprobantes','comercios','vencimientos','mp_cuentas','mp_cobros'] loop
+                           'movimientos_stock','proveedores','comprobantes','comercios','vencimientos','mp_cuentas','mp_cobros','pagos_proveedor'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
     end if;

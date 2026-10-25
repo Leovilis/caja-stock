@@ -265,6 +265,63 @@ export interface Compra {
   usuario_nombre: string;
   fac_tipo: TipoFacturaCompra;
   fac_iva: number;
+  pagado: number; // cuánto se pagó (las de contado: el total)
+  vence: string | null; // vencimiento de la factura (a cuenta corriente)
+}
+
+/** Pago a un proveedor (cuenta corriente) */
+export interface PagoProveedor {
+  id: string;
+  fecha: string;
+  proveedor_id: string | null;
+  proveedor_nombre: string;
+  medio: "efectivo" | "transferencia" | "otro";
+  total: number;
+  a_cuenta: number;
+  aplicaciones: { compra_id: string; comprobante: string; fecha: string; monto: number }[];
+  notas: string;
+  usuario_nombre: string;
+  anulado: string | null;
+  anulado_por: string | null;
+  motivo_anulacion: string | null;
+}
+
+/** Lo que falta pagar de una compra a cuenta corriente */
+export const pendienteCompra = (c: Pick<Compra, "medio" | "total" | "pagado">) =>
+  c.medio === "cuenta_corriente" ? Math.max(0, Math.round((Number(c.total) - Number(c.pagado || 0)) * 100) / 100) : 0;
+
+export interface SaldoProveedor {
+  proveedor_id: string;
+  nombre: string;
+  facturas: number; // facturas con saldo
+  deuda: number; // suma de lo pendiente de las facturas
+  aCuenta: number; // anticipos (pagos no asignados)
+  saldo: number; // deuda − anticipos (negativo = saldo a favor)
+  vencido: number;
+  proximoVto: string | null;
+}
+
+export function saldosProveedores(compras: Compra[], pagos: PagoProveedor[], proveedores: { id: string; nombre: string }[]): SaldoProveedor[] {
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+  const m = new Map<string, SaldoProveedor>();
+  const de = (id: string, nombre: string) => {
+    if (!m.has(id)) m.set(id, { proveedor_id: id, nombre, facturas: 0, deuda: 0, aCuenta: 0, saldo: 0, vencido: 0, proximoVto: null });
+    return m.get(id)!;
+  };
+  proveedores.forEach((p) => de(p.id, p.nombre));
+  for (const c of compras) {
+    const pend = pendienteCompra(c);
+    if (!c.proveedor_id || pend <= 0) continue;
+    const s = de(c.proveedor_id, c.proveedor_nombre);
+    s.facturas += 1;
+    s.deuda += pend;
+    if (c.vence && c.vence < hoy) s.vencido += pend;
+    if (c.vence && c.vence >= hoy && (!s.proximoVto || c.vence < s.proximoVto)) s.proximoVto = c.vence;
+  }
+  for (const p of pagos) if (!p.anulado && p.proveedor_id && Number(p.a_cuenta) > 0) de(p.proveedor_id, p.proveedor_nombre).aCuenta += Number(p.a_cuenta);
+  return [...m.values()]
+    .map((s) => ({ ...s, deuda: Math.round(s.deuda * 100) / 100, saldo: Math.round((s.deuda - s.aCuenta) * 100) / 100 }))
+    .sort((a, b) => b.saldo - a.saldo || a.nombre.localeCompare(b.nombre));
 }
 
 export type TipoFacturaCompra = "sin_factura" | "A" | "B" | "C";

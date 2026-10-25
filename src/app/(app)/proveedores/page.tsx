@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { Edit, Phone, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useQuery } from "@/hooks/useQuery";
 import { borrarProveedor, guardarProveedor } from "@/lib/db";
-import type { Producto, Proveedor } from "@/lib/types";
+import type { Compra, PagoProveedor, Producto, Proveedor } from "@/lib/types";
+import { saldosProveedores } from "@/lib/types";
+import { money } from "@/lib/format";
+import Link from "next/link";
 import { Empty, Field, Modal, PageHeader } from "@/components/ui";
 
 const VACIO: Omit<Proveedor, "id"> = { nombre: "", contacto: "", telefono: "", email: "", cuit: "", dias_visita: "", notas: "" };
@@ -14,6 +17,12 @@ const VACIO: Omit<Proveedor, "id"> = { nombre: "", contacto: "", telefono: "", e
 export default function ProveedoresPage() {
   const { data: proveedores } = useQuery<Proveedor>(() => supabase.from("proveedores").select("*"), ["proveedores"]);
   const { data: productos } = useQuery<Producto>(() => supabase.from("productos").select("id, proveedor_id"), ["productos"]);
+  const { data: comprasCC } = useQuery<Compra>(() => supabase.from("compras").select("*").eq("medio", "cuenta_corriente"), ["compras"]);
+  const { data: pagos } = useQuery<PagoProveedor>(() => supabase.from("pagos_proveedor").select("*"), ["pagos_proveedor"]);
+  const saldos = useMemo(
+    () => new Map(saldosProveedores(comprasCC, pagos, proveedores).map((s) => [s.proveedor_id, s])),
+    [comprasCC, pagos, proveedores]
+  );
   const [edit, setEdit] = useState<Proveedor | "nuevo" | null>(null);
   const [f, setF] = useState(VACIO);
 
@@ -89,6 +98,23 @@ export default function ProveedoresPage() {
                 {p.cuit && <div>CUIT {p.cuit}</div>}
                 {p.dias_visita && <div>Visita: {p.dias_visita}</div>}
                 <div className="text-xs text-slate-400">{productos.filter((x) => x.proveedor_id === p.id).length} productos</div>
+                {(() => {
+                  const sp = saldos.get(p.id);
+                  if (!sp || (sp.saldo === 0 && sp.facturas === 0)) return null;
+                  return (
+                    <div className="mt-2 flex items-center justify-between rounded-lg bg-amber-50 px-2 py-1 text-xs">
+                      <span className={sp.saldo > 0 ? "text-amber-800" : "text-emerald-700"}>
+                        {sp.saldo > 0 ? `Le debés ${money(sp.saldo)}` : `Saldo a favor ${money(-sp.saldo)}`}
+                        {sp.vencido > 0 && <b className="text-rose-700"> · vencido {money(sp.vencido)}</b>}
+                      </span>
+                      {sp.saldo > 0 && (
+                        <Link href={`/pagos?proveedor=${p.id}`} className="font-semibold text-brand-600 hover:underline">
+                          Pagar
+                        </Link>
+                      )}
+                    </div>
+                  );
+                })()}
                 {p.notas && <div className="mt-1 text-xs italic">{p.notas}</div>}
               </div>
             </div>

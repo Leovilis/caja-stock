@@ -12,7 +12,8 @@ import { compraConFactura, filtrarCompras, ivaContenido, TIPOS_FACTURA_COMPRA, e
 import { FiltroFacturaSelector, useFiltroFactura } from "@/components/FiltroFactura";
 import { money, number, fechaHora, round2, isoDate, parseIsoDate, finDia, inicioMes } from "@/lib/format";
 import type { Compra, ItemCompra, MedioPago, Producto, Proveedor, TipoFacturaCompra } from "@/lib/types";
-import { MEDIOS_PAGO, medioLabel } from "@/lib/types";
+import { MEDIOS_PAGO, medioLabel, pendienteCompra } from "@/lib/types";
+import Link from "next/link";
 import { Badge, Empty, Field, Modal, NumInput, PageHeader, Stat } from "@/components/ui";
 
 const norm = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -88,7 +89,16 @@ export default function ComprasPage() {
           hint={ivaCredito > 0 ? `IVA crédito fiscal (facturas A): ${money(ivaCredito)}` : `${conFac.length} con factura · ${todas.length - conFac.length} sin`}
         />
         <Stat label="Principal proveedor" value={porProv[0]?.[0] ?? "—"} hint={porProv[0] ? money(porProv[0][1]) : ""} />
-        <Stat label="A cuenta corriente" value={money(compras.filter((c) => c.medio === "cuenta_corriente").reduce((a, c) => a + Number(c.total), 0))} tone="amber" hint="Pendiente de pago al proveedor" />
+        <Stat
+          label="Pendiente de pago"
+          value={money(compras.reduce((a, c) => a + pendienteCompra(c), 0))}
+          tone="amber"
+          hint={
+            <Link href="/pagos" className="underline">
+              Compras a cuenta corriente del período · ver pagos
+            </Link>
+          }
+        />
       </div>
 
       <div className="card overflow-x-auto">
@@ -117,7 +127,20 @@ export default function ComprasPage() {
                     {c.comprobante && <span className="ml-2 text-xs text-slate-500">{c.comprobante}</span>}
                   </td>
                   <td>{c.items.length}</td>
-                  <td>{medioLabel(c.medio)}{c.pagado_desde_caja ? " (caja)" : ""}</td>
+                  <td>
+                    {medioLabel(c.medio)}
+                    {c.pagado_desde_caja ? " (caja)" : ""}
+                    {c.medio === "cuenta_corriente" &&
+                      (pendienteCompra(c) > 0 ? (
+                        <div>
+                          <Badge tone="amber">Debe {money(pendienteCompra(c))}</Badge>
+                        </div>
+                      ) : (
+                        <div>
+                          <Badge tone="green">Pagada</Badge>
+                        </div>
+                      ))}
+                  </td>
                   <td className="text-right font-semibold tabular-nums">{money(c.total)}</td>
                   <td>
                     <button className="text-slate-400 hover:text-brand-600" onClick={() => setDetalle(c)}>
@@ -182,6 +205,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [desdeCaja, setDesdeCaja] = useState(true);
   const [actCosto, setActCosto] = useState(true);
   const [mantenerMargen, setMantenerMargen] = useState(true);
+  const [vence, setVence] = useState("");
   const [guardando, setGuardando] = useState(false);
 
   const res = useMemo(() => {
@@ -232,10 +256,12 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
         mantener_margen: actCosto && mantenerMargen,
         fac_tipo: facTipo,
         fac_iva: ivaFinal,
+        vence: medio === "cuenta_corriente" && vence ? vence : null,
       });
       toast.success("Compra registrada y stock actualizado");
       setItems([]);
       setComprobante("");
+      setVence("");
       setFacTipo("sin_factura");
       setIvaManual(false);
       onClose();
@@ -281,6 +307,11 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
             <option value="cuenta_corriente">Cuenta corriente (a pagar)</option>
           </select>
         </Field>
+        {medio === "cuenta_corriente" && (
+          <Field label="Vence (opcional)">
+            <input className="input" type="date" value={vence} onChange={(e) => setVence(e.target.value)} />
+          </Field>
+        )}
       </div>
 
       <div className="relative mt-4">

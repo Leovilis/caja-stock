@@ -25,6 +25,7 @@ import {
   Lock,
   Building2,
   KeyRound,
+  Banknote,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Loading } from "./ui";
@@ -41,6 +42,7 @@ const NAV: { href: string; label: string; icon: typeof Store; modulo?: Modulo; a
   { href: "/stock", label: "Stock", icon: Boxes, modulo: "stock", admin: true },
   { href: "/compras", label: "Compras", icon: PackagePlus, modulo: "compras", admin: true },
   { href: "/proveedores", label: "Proveedores", icon: Truck, modulo: "proveedores", admin: true },
+  { href: "/pagos", label: "Pagos a proveedores", icon: Banknote, modulo: "compras", admin: true },
   { href: "/gastos", label: "Gastos", icon: ClipboardList, modulo: "gastos", admin: true },
   { href: "/reportes", label: "Reportes", icon: BarChart3, modulo: "reportes", admin: true },
   { href: "/libro", label: "Libro consolidado", icon: BookOpenCheck, modulo: "libro", admin: true },

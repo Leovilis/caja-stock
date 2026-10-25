@@ -151,10 +151,21 @@ export interface NuevaCompra {
   items: { producto_id: string; cantidad: number; costo: number; vence?: string }[];
   fac_tipo: TipoFacturaCompra;
   fac_iva: number;
+  vence?: string | null; // vencimiento de la factura si queda a cuenta corriente
 }
 export const registrarCompra = (c: NuevaCompra) => rpc<string>("registrar_compra", { p: c });
 export const datosFacturaCompra = (id: string, tipo: TipoFacturaCompra, numero: string, iva: number) =>
   rpc<void>("datos_factura_compra", { p_compra: id, p_tipo: tipo, p_numero: numero, p_iva: iva });
+
+/* PAGOS A PROVEEDORES ------------------------------------------------ */
+export const registrarPagoProveedor = (p: {
+  proveedor_id: string;
+  medio: "efectivo" | "transferencia" | "otro";
+  aplicaciones: { compra_id: string; monto: number }[];
+  a_cuenta: number;
+  notas: string;
+}) => rpc<string>("registrar_pago_proveedor", { p });
+export const anularPagoProveedor = (id: string, motivo: string) => rpc<void>("anular_pago_proveedor", { p_pago: id, p_motivo: motivo });
 
 /* GASTOS ------------------------------------------------------------- */
 export const registrarGasto = (g: {
