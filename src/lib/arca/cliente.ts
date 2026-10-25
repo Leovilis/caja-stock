@@ -2,7 +2,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Comprobante } from "@/lib/types";
 
-async function llamar<T>(ruta: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function llamar<T>(ruta: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Sesión vencida: volvé a ingresar");

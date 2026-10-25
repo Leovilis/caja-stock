@@ -68,6 +68,8 @@ export interface Pago {
   monto: number; // lo cobrado con ese medio (incluye su recargo)
   recargo?: number;
   nombre?: string; // nombre del medio al momento de la venta
+  mp_order?: string; // orden de Mercado Pago (cobro con QR automático, ya aprobado)
+  sin_recargo?: boolean;
 }
 
 /** Medio de cobro configurado por el comercio */
@@ -420,3 +422,44 @@ export function diasParaVencer(vence: string): number {
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
   return Math.round((Date.parse(vence) - Date.parse(hoy)) / 86_400_000);
 }
+
+// ---------------------------------------------------------------------
+// Mercado Pago (cobro con QR automático)
+// ---------------------------------------------------------------------
+export interface MpCuenta {
+  comercio_id: string;
+  nickname: string;
+  store_nombre: string;
+  external_pos_id: string;
+  qr_imagen: string | null;
+  qr_pdf: string | null;
+  conectado: string;
+}
+
+/**
+ * Medio de cobro donde se registra un pago aprobado por Mercado Pago, según cómo pagó el cliente.
+ * Usa los de la plantilla "QR Mercado Pago" si están activos; si no, el QR genérico.
+ */
+export function medioParaPagoMP(tipo: string | null, medios: MedioConfig[]): string | null {
+  const activo = (id: string) => medios.some((m) => m.id === id && m.activo);
+  const candidatos =
+    tipo === "account_money"
+      ? ["qr_mp_cuenta"]
+      : tipo === "debit_card" || tipo === "prepaid_card"
+        ? ["qr_mp_debito"]
+        : tipo === "credit_card"
+          ? ["qr_mp_credito"]
+          : [];
+  const elegido =
+    candidatos.find(activo) ?? (activo("qr") ? "qr" : undefined) ?? medios.find((m) => m.activo && m.grupo === "QR Mercado Pago")?.id;
+  if (elegido) return elegido;
+  // "qr" sin configurar también lo acepta la base (es uno de los medios básicos); si está desactivado, no hay dónde registrarlo
+  return medios.some((m) => m.id === "qr") ? null : "qr";
+}
+
+export const TIPO_PAGO_MP: Record<string, string> = {
+  account_money: "dinero en cuenta",
+  debit_card: "débito",
+  prepaid_card: "tarjeta prepaga",
+  credit_card: "crédito",
+};

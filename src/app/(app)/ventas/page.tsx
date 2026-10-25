@@ -227,7 +227,10 @@ export default function VentasPage() {
                 </tr>
                 {detalle.pagos.map((p, k) => (
                   <tr key={"p" + k} className="text-sm text-slate-500">
-                    <td>{p.nombre ?? medioLabel(p.medio)}</td>
+                    <td>
+                      {p.nombre ?? medioLabel(p.medio)}
+                      {p.mp_order && <span className="ml-1 text-xs text-sky-700" title={`Orden ${p.mp_order}`}>· confirmado por Mercado Pago</span>}
+                    </td>
                     <td className="text-right">{money(p.monto)}</td>
                   </tr>
                 ))}

@@ -241,6 +241,35 @@ alter table config add column if not exists alias_transferencia text not null de
 alter table ventas add column if not exists recargo  numeric(14,2) not null default 0;  -- recargo/descuento por medio de pago (incluido en total)
 alter table ventas add column if not exists comision numeric(14,2) not null default 0;  -- comisión estimada de los procesadores (con IVA)
 
+-- Mercado Pago (cobro con QR automático): cuenta conectada y cobros generados.
+-- El access token NO está acá: se guarda cifrado en Vault (mp_guardar_token).
+create table if not exists mp_cuentas (
+  comercio_id      uuid primary key references comercios(id) on delete cascade,
+  user_id          text not null,
+  nickname         text not null default '',
+  store_id         text not null,
+  store_nombre     text not null default '',
+  pos_id           text not null,
+  external_pos_id  text not null,
+  qr_imagen        text,          -- QR fijo de la caja (para imprimir)
+  qr_pdf           text,          -- cartel con el QR (PDF de Mercado Pago)
+  conectado        timestamptz not null default now()
+);
+create table if not exists mp_cobros (
+  id              uuid primary key default gen_random_uuid(),
+  comercio_id     uuid not null references comercios(id) on delete cascade,
+  order_id        text not null unique,
+  monto           numeric(14,2) not null,
+  estado          text not null default 'pendiente' check (estado in ('pendiente', 'aprobado', 'cancelado', 'vencido', 'rechazado')),
+  tipo_pago       text,          -- account_money | debit_card | credit_card | prepaid_card…
+  pago_id         text,
+  venta_id        uuid references ventas(id) on delete set null,
+  usuario_nombre  text not null,
+  creado          timestamptz not null default now(),
+  actualizado     timestamptz not null default now()
+);
+create index if not exists mp_cobros_comercio_idx on mp_cobros (comercio_id, creado desc);
+
 -- Cenefas: desde cuándo rige el precio actual (para imprimir sólo las que cambiaron)
 alter table productos add column if not exists precio_desde timestamptz;
 update productos set precio_desde = coalesce(actualizado, creado, now()) where precio_desde is null;
@@ -686,6 +715,7 @@ declare
   it jsonb; p productos; v_cant numeric; v_precio numeric;
   v_sub numeric := 0; v_costo_total numeric := 0; v_total numeric; v_pagado numeric; v_nuevo numeric;
   r record; v_recargo numeric := 0; v_comision numeric := 0; v_pagos jsonb := '[]'; v_rec numeric; v_cobrado numeric;
+  v_mp text[] := '{}'; c mp_cobros;
 begin
   u := _perfil_activo();
   select * into cfg from config where comercio_id = u.comercio_id;
@@ -736,7 +766,9 @@ begin
            (mm.m is not null) as existe, mm.m->>'nombre' as nombre,
            coalesce((m->>'activo')::boolean, true) as activo,
            coalesce((m->>'recargo')::numeric, 0) as recargo,
-           coalesce((m->>'comision')::numeric, 0) as comision
+           coalesce((m->>'comision')::numeric, 0) as comision,
+           coalesce((x->>'sin_recargo')::boolean, false) as sin_recargo,
+           nullif(x->>'mp_order', '') as mp_order
     from jsonb_array_elements(coalesce(p_pagos, '[]')) x
     left join lateral (select m from jsonb_array_elements(coalesce(cfg.medios_pago, '[]')) m where m->>'id' = x->>'medio' limit 1) mm on true
     where (x->>'monto')::numeric > 0
@@ -745,13 +777,23 @@ begin
       raise exception 'Medio de pago inválido: %', r.medio;
     end if;
     if not r.activo then raise exception 'El medio de pago "%" está desactivado', coalesce(r.nombre, r.medio); end if;
-    v_rec := round(r.base * r.recargo / 100, 2);
+    -- Pago con QR de Mercado Pago confirmado por la API: tiene que estar aprobado, ser de este comercio,
+    -- por este monto y no haberse usado en otra venta. Se cobra el total del ticket, sin recargo.
+    if r.mp_order is not null then
+      select * into c from mp_cobros where order_id = r.mp_order and comercio_id = u.comercio_id for update;
+      if not found or c.estado <> 'aprobado' then raise exception 'El pago con QR no figura aprobado en Mercado Pago'; end if;
+      if c.venta_id is not null then raise exception 'Ese pago con QR ya se usó en la venta de otro ticket'; end if;
+      if abs(c.monto - r.base) > 0.01 then raise exception 'El monto pagado con QR (%) no coincide con el ticket (%)', c.monto, r.base; end if;
+      v_mp := v_mp || r.mp_order;
+    end if;
+    v_rec := case when r.sin_recargo or r.mp_order is not null then 0 else round(r.base * r.recargo / 100, 2) end;
     v_cobrado := r.base + v_rec;
     v_recargo := v_recargo + v_rec;
     v_comision := v_comision + round(v_cobrado * r.comision * 1.21 / 100, 2);   -- comisión + IVA 21 %
     v_pagos := v_pagos || jsonb_build_array(
       jsonb_build_object('medio', r.medio, 'monto', v_cobrado, 'recargo', v_rec)
-      || case when r.nombre is not null then jsonb_build_object('nombre', r.nombre) else '{}'::jsonb end);
+      || case when r.nombre is not null then jsonb_build_object('nombre', r.nombre) else '{}'::jsonb end
+      || case when r.mp_order is not null then jsonb_build_object('mp_order', r.mp_order) else '{}'::jsonb end);
   end loop;
 
   -- 2) Registra la venta con el próximo número de ticket DEL COMERCIO (el UPDATE bloquea la fila: sin saltos ni repetidos)
@@ -782,6 +824,9 @@ begin
   end loop;
 
   update ventas set costo_total = round(v_costo_total, 2) where id = v_id;
+  if cardinality(v_mp) > 0 then
+    update mp_cobros set venta_id = v_id, actualizado = now() where order_id = any(v_mp) and comercio_id = u.comercio_id;
+  end if;
 
   return (select to_jsonb(v) || jsonb_build_object('venta_items', (select jsonb_agg(to_jsonb(i) order by i.id) from venta_items i where i.venta_id = v.id))
           from ventas v where v.id = v_id);
@@ -1213,6 +1258,29 @@ end $$;
 
 
 -- ---------------------------------------------------------------------
+-- TOKEN DE MERCADO PAGO POR COMERCIO (cifrado en Supabase Vault; sólo el servidor)
+-- ---------------------------------------------------------------------
+create or replace function mp_guardar_token(p_comercio uuid, p_token text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_id uuid; v_nombre text := 'mp_token_' || p_comercio;
+begin
+  select id into v_id from vault.secrets where name = v_nombre;
+  if p_token is null then
+    if v_id is not null then delete from vault.secrets where id = v_id; end if;
+  elsif v_id is null then
+    perform vault.create_secret(p_token, v_nombre, 'Caja & Stock: access token Mercado Pago');
+  else
+    perform vault.update_secret(v_id, p_token, v_nombre);
+  end if;
+end $$;
+
+create or replace function mp_token(p_comercio uuid) returns text
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select decrypted_secret from vault.decrypted_secrets where name = 'mp_token_' || p_comercio);
+end $$;
+
+-- ---------------------------------------------------------------------
 -- CERTIFICADOS ARCA POR COMERCIO (cifrados en Supabase Vault)
 --   Sólo los usa el servidor con la clave secreta (service_role); el navegador nunca los ve.
 -- ---------------------------------------------------------------------
@@ -1249,7 +1317,7 @@ declare t text;
 begin
   foreach t in array array['comercios','superadmins','invitaciones','perfiles','config','proveedores','productos','cajas',
                            'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta',
-                           'vencimientos'] loop
+                           'vencimientos','mp_cuentas','mp_cobros'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;
@@ -1303,6 +1371,8 @@ create policy gastos_sel on gastos for select
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('gastos')));
 create policy gastos_del on gastos for delete
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and caja_id is null and (select modulo_habilitado('gastos')));
+create policy mp_cuentas_sel on mp_cuentas for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
+create policy mp_cobros_sel on mp_cobros for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 create policy vencimientos_sel on vencimientos for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
 create policy comprobantes_sel on comprobantes for select using (
   comercio_id = (select mi_comercio()) and exists (select 1 from ventas v where v.id = venta_id));
@@ -1339,10 +1409,10 @@ create trigger marcar_precio before insert or update of precio on productos for 
 revoke all on function _perfil_activo, _perfil_base, _exigir_admin, _exigir_superadmin, _exigir_modulo, _licencia_vigente,
   _crear_comercio, _invitar, _nuevo_usuario, _proteger_clave_vendedor from public, anon, authenticated;
 -- Credenciales ARCA: sólo el servidor
-revoke all on function arca_guardar_credenciales, arca_credenciales from public, anon, authenticated;
+revoke all on function arca_guardar_credenciales, arca_credenciales, mp_guardar_token, mp_token from public, anon, authenticated;
 do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
-    grant execute on function arca_guardar_credenciales, arca_credenciales, mi_comercio to service_role;
+    grant execute on function arca_guardar_credenciales, arca_credenciales, mp_guardar_token, mp_token, mi_comercio to service_role;
   end if;
 end $$;
 
@@ -1362,7 +1432,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['productos','ventas','cajas','movimientos_caja','config','perfiles','gastos','compras',
-                           'movimientos_stock','proveedores','comprobantes','comercios','vencimientos'] loop
+                           'movimientos_stock','proveedores','comprobantes','comercios','vencimientos','mp_cuentas','mp_cobros'] loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
     end if;

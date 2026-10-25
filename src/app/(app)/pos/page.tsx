@@ -2,14 +2,16 @@
 
 import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { FileCheck2, Barcode, Minus, Plus, Printer, Search, ShoppingCart, Star, Trash2, Wallet, PlusCircle, Percent } from "lucide-react";
+import { FileCheck2, Barcode, Minus, Plus, Printer, Search, ShoppingCart, Star, Trash2, Wallet, PlusCircle, Percent, QrCode } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
 import { abrirCaja, registrarVenta, type ItemCarrito } from "@/lib/db";
 import { money, round2, number } from "@/lib/format";
 import { imprimirTicket } from "@/lib/ticket";
-import { Pago, Producto, Venta, facturacionConfigurada, comisionDe, conRecargo, mediosDe, nombreCorto, type MedioConfig } from "@/lib/types";
+import { Pago, Producto, Venta, facturacionConfigurada, comisionDe, conRecargo, mediosDe, nombreCorto, medioParaPagoMP, TIPO_PAGO_MP, type MedioConfig, type MpCuenta } from "@/lib/types";
+import { useMpCuenta } from "@/hooks/useMpCuenta";
+import { QrMercadoPago } from "@/components/QrMercadoPago";
 import { FacturarModal } from "@/components/FacturarModal";
 
 interface CarritoItem extends ItemCarrito {
@@ -210,6 +212,7 @@ export default function POSPage() {
   const total = round2(Math.max(0, subtotal - descuento));
   const unidades = carrito.reduce((a, i) => a + i.cantidad, 0);
   const medios = useMemo(() => mediosDe(config), [config]);
+  const { cuenta: mpCuenta } = useMpCuenta();
   const costoTicket = useMemo(() => {
     const porId = new Map(productos.map((p) => [p.id, Number(p.costo)]));
     return round2(carrito.reduce((a, i) => a + (i.producto_id ? (porId.get(i.producto_id) ?? 0) * i.cantidad : 0), 0));
@@ -221,8 +224,8 @@ export default function POSPage() {
     foco();
   }
 
-  async function confirmarVenta(pagos: Pago[], recibido: number, vuelto: number) {
-    if (!caja) return;
+  async function confirmarVenta(pagos: Pago[], recibido: number, vuelto: number): Promise<boolean> {
+    if (!caja) return false;
     try {
       const v = await registrarVenta(carrito, descuento, pagos, recibido, vuelto);
       setUltimaVenta(v);
@@ -231,8 +234,10 @@ export default function POSPage() {
       vaciar();
       toast.success(`Venta #${v.numero} registrada${vuelto ? ` · Vuelto ${money(vuelto)}` : ""}`);
       if (config.imprimir_automatico) imprimirTicket(v, config);
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
+      return false;
     }
   }
 
@@ -397,6 +402,7 @@ export default function POSPage() {
         costo={costoTicket}
         medios={medios}
         alias={config.alias_transferencia}
+        mp={mpCuenta}
         onClose={() => { setCobrando(false); foco(); }}
         onConfirm={confirmarVenta}
       />
@@ -475,6 +481,7 @@ function CobroModal({
   costo,
   medios,
   alias,
+  mp,
   onClose,
   onConfirm,
 }: {
@@ -483,8 +490,9 @@ function CobroModal({
   costo: number; // costo de la mercadería del ticket (para avisar si queda a pérdida)
   medios: MedioConfig[];
   alias: string;
+  mp: MpCuenta | null; // cuenta de Mercado Pago conectada (cobro con QR automático)
   onClose: () => void;
-  onConfirm: (pagos: Pago[], recibido: number, vuelto: number) => Promise<void>;
+  onConfirm: (pagos: Pago[], recibido: number, vuelto: number) => Promise<boolean>;
 }) {
   const activos = medios.filter((m) => m.activo);
   const inicial = (activos.find((m) => m.id === "efectivo") ?? activos[0])?.id ?? "efectivo";
@@ -494,9 +502,14 @@ function CobroModal({
   const [dividido, setDividido] = useState(false);
   const [pagos, setPagos] = useState<Record<string, number>>(vacio);
   const [enviando, setEnviando] = useState(false);
+  const [qrAuto, setQrAuto] = useState(false);
+  const [pagoQR, setPagoQR] = useState<{ pago: Pago; tipo: string | null } | null>(null);
+  const puedeQR = !!mp && medioParaPagoMP(null, medios) !== null;
 
   useEffect(() => {
     if (open) {
+      setQrAuto(false);
+      setPagoQR(null);
       setMedio(inicial);
       setRecibido(0);
       setDividido(false);
@@ -524,6 +537,18 @@ function CobroModal({
   const valido = dividido ? Math.abs(falta) < 0.01 : medio !== "efectivo" || recibidoReal >= aCobrar;
   const perdida = costo > 0 && teQueda < costo;
   const usaTransferencia = cobrados.some((c) => c.m === "transferencia");
+
+  async function registrarQR(p: { pago: Pago; tipo: string | null }) {
+    setPagoQR(p);
+    setEnviando(true);
+    const ok = await onConfirm([p.pago], 0, 0);
+    setEnviando(false);
+    if (ok) setPagoQR(null);
+  }
+  const cerrar = () => {
+    if (pagoQR && !confirm("El cliente YA PAGÓ con QR y la venta no se registró. ¿Cerrar igual? (vas a tener que cargarla a mano)")) return;
+    onClose();
+  };
 
   async function confirmar() {
     if (!valido || enviando) return;
@@ -556,7 +581,30 @@ function CobroModal({
   const billetes = [1000, 2000, 5000, 10000, 20000].filter((b) => b >= aCobrar * 0.2);
 
   return (
-    <Modal open={open} onClose={onClose} title="Cobrar" size="md">
+    <Modal open={open} onClose={cerrar} title="Cobrar" size="md">
+      {pagoQR ? (
+        <div className="py-4 text-center">
+          <div className="text-xl font-bold text-emerald-700">Pago con QR aprobado ✓</div>
+          <p className="mt-1 text-sm text-slate-600">
+            {money(pagoQR.pago.monto)}
+            {pagoQR.tipo ? ` · ${TIPO_PAGO_MP[pagoQR.tipo] ?? pagoQR.tipo}` : ""}
+          </p>
+          {enviando ? (
+            <p className="mt-4 text-sm text-slate-500">Registrando la venta…</p>
+          ) : (
+            <>
+              <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+                El pago ya entró en Mercado Pago pero la venta no se pudo registrar (mirá el aviso). <b>No le cobres de nuevo</b>: corregí y reintentá.
+              </p>
+              <button className="btn-success mt-4 w-full" onClick={() => registrarQR(pagoQR)}>
+                Reintentar registrar la venta
+              </button>
+            </>
+          )}
+        </div>
+      ) : qrAuto ? (
+        <QrMercadoPago monto={total} medios={medios} onAprobado={(pago, tipo) => registrarQR({ pago, tipo })} onSalir={() => setQrAuto(false)} />
+      ) : (
       <div
         onKeyDown={(e) => {
           if (e.key === "Enter") {
@@ -575,6 +623,15 @@ function CobroModal({
           )}
         </div>
 
+        {puedeQR && (
+          <button
+            className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg bg-sky-600 px-3 py-3 text-sm font-semibold text-white hover:bg-sky-700"
+            onClick={() => setQrAuto(true)}
+            title="Genera el cobro en Mercado Pago y confirma la venta sola cuando el cliente paga"
+          >
+            <QrCode size={18} /> Cobrar {money(total)} con QR Mercado Pago (automático)
+          </button>
+        )}
         {activos.length > 1 && (
           <label className="mb-3 flex items-center gap-2 text-sm">
             <input type="checkbox" checked={dividido} onChange={(e) => setDividido(e.target.checked)} />
@@ -678,6 +735,7 @@ function CobroModal({
           {enviando ? "Registrando…" : "Confirmar venta (Enter)"}
         </button>
       </div>
+      )}
     </Modal>
   );
 }

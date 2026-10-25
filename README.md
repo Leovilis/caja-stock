@@ -62,6 +62,8 @@ Una sola base de Supabase y un solo deploy sirven a todos los comercios. Cada fi
 
 **Si alguien se registra sin invitación** no ve nada: la cuenta queda sin comercio hasta que un admin la invite con ese email.
 
+**Cobro con QR de Mercado Pago (todos los planes):** cada comercio conecta su cuenta en *Configuración*; la caja genera el cobro por el monto exacto y la venta se confirma sola cuando Mercado Pago lo aprueba. Ver [`docs/MERCADOPAGO.md`](docs/MERCADOPAGO.md).
+
 **Facturación ARCA:** cada comercio con plan completo carga **su** certificado en *Configuración* (se guarda cifrado en Supabase Vault). El servidor necesita una sola variable: `SUPABASE_SECRET_KEY`. Ver [`docs/FACTURACION-ARCA.md`](docs/FACTURACION-ARCA.md).
 
 **Pasar la base que ya tenías (un comercio) a multi-comercio:** backup → `supabase/migrar_a_multicomercio.sql` → `supabase/schema.sql`. Tus datos quedan en un comercio con el nombre de tu configuración y plan completo; tu usuario admin pasa a ser el administrador general. Los tickets siguen la numeración que tenían.

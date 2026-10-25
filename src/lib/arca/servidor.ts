@@ -39,8 +39,11 @@ export interface Perfil {
   activo: boolean;
 }
 
-/** Valida el token del usuario que llama y devuelve su perfil activo */
-export async function usuarioDesdeRequest(req: Request): Promise<{ perfil: Perfil; token: string }> {
+/**
+ * Valida el token del usuario que llama y devuelve su perfil activo.
+ * Por defecto exige plan completo (facturación); `cualquierPlan` lo omite (ej: cobro con QR, también en el básico).
+ */
+export async function usuarioDesdeRequest(req: Request, opciones: { cualquierPlan?: boolean } = {}): Promise<{ perfil: Perfil; token: string }> {
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!token) throw new ArcaError("Sesión no válida", 401);
   const db = admin();
@@ -51,7 +54,7 @@ export async function usuarioDesdeRequest(req: Request): Promise<{ perfil: Perfi
   // Plan, suspensión y vencimiento del comercio
   const { data: com } = await db.from("comercios").select("plan, vence, activo").eq("id", perfil.comercio_id).maybeSingle();
   if (!com) throw new ArcaError("Comercio inexistente", 403);
-  if (com.plan !== "completo") throw new ArcaError("La facturación electrónica no está incluida en el plan básico", 403);
+  if (!opciones.cualquierPlan && com.plan !== "completo") throw new ArcaError("La facturación electrónica no está incluida en el plan básico", 403);
   if (!com.activo) throw new ArcaError("El sistema está suspendido para este comercio", 403);
   const hoyAR = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
   if (com.vence && hoyAR > com.vence) throw new ArcaError("La licencia del sistema venció", 403);

@@ -11,6 +11,7 @@ import type { Config, MedioConfig, Venta } from "@/lib/types";
 import { PLANTILLAS_MEDIOS, comisionDe, conRecargo, mediosDe } from "@/lib/types";
 import { money } from "@/lib/format";
 import { Field, NumInput, PageHeader } from "@/components/ui";
+import { MercadoPagoCard } from "@/components/MercadoPagoCard";
 import { ALICUOTAS, cuitValido } from "@/lib/arca/calculo";
 
 function ListaEditable({ titulo, items, onChange }: { titulo: string; items: string[]; onChange: (v: string[]) => void }) {
@@ -117,6 +118,8 @@ export default function ConfigPage() {
             <input className="input" value={f.pie_ticket} onChange={(e) => set("pie_ticket", e.target.value)} />
           </Field>
         </div>
+
+        <MercadoPagoCard />
 
         <MediosPagoCard
           medios={f.medios_pago}
