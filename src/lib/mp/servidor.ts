@@ -25,6 +25,12 @@ function mensajeMP(status: number, j: Record<string, unknown> | null): string {
   const errores = (j?.errors as { message?: string; code?: string }[] | undefined) ?? [];
   const detalle = errores.map((e) => e.message || e.code).filter(Boolean).join(" · ") || (j?.message as string) || (j?.error as string) || "";
   if (status === 404 && /pos/i.test(detalle)) return "Mercado Pago no encuentra la caja: volvé a conectar la cuenta en Configuración";
+  if (status === 403)
+    return (
+      "Mercado Pago no le da permiso a esta aplicación para esta operación (403). Revisá: 1) que sea el Access Token de " +
+      "PRODUCCIÓN (no el de prueba), 2) que la aplicación sea de «Pagos presenciales / Código QR», y 3) que la aplicación esté " +
+      "creada con la misma cuenta que cobra" + (detalle ? ` [${detalle}]` : "")
+    );
   return `Mercado Pago respondió ${status}${detalle ? `: ${detalle}` : ""}`;
 }
 
@@ -68,7 +74,19 @@ export interface UsuarioMP {
   nickname: string;
   site_id: string;
 }
-export const mpUsuario = (token: string) => mp<UsuarioMP>(token, "/users/me");
+/**
+ * Datos de la cuenta dueña del token. Si /users/me no está permitido para la aplicación (403),
+ * el id sale del propio token: APP_USR-<app>-<fecha>-<hash>-<user_id>.
+ */
+export async function mpUsuario(token: string): Promise<UsuarioMP> {
+  try {
+    return await mp<UsuarioMP>(token, "/users/me");
+  } catch (e) {
+    const id = Number(token.trim().split("-").pop());
+    if ((e as MpError).mpStatus === 403 && Number.isInteger(id) && id > 0) return { id, nickname: "", site_id: "MLA" };
+    throw e;
+  }
+}
 
 export interface SucursalMP {
   id: string;

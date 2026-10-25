@@ -40,7 +40,13 @@ export async function POST(req: Request) {
       }
     }
 
-    const orden = await mpCrearOrden(token, cuenta.external_pos_id, monto, `cs-${randomUUID()}`, `${cfg?.nombre ?? "Compra"}`);
+    let orden;
+    try {
+      orden = await mpCrearOrden(token, cuenta.external_pos_id, monto, `cs-${randomUUID()}`, `${cfg?.nombre ?? "Compra"}`);
+    } catch (e) {
+      const err = e as MpError;
+      throw new MpError(`Al crear el cobro: ${err.message}`, err.detalle, err.mpStatus);
+    }
     const { data: fila, error } = await db
       .from("mp_cobros")
       .insert({ comercio_id: perfil.comercio_id, order_id: orden.id, monto, usuario_nombre: perfil.nombre })

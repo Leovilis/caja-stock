@@ -20,7 +20,15 @@ export async function POST(req: Request) {
     if (!/^APP_USR-|^TEST-/.test(token)) {
       return Response.json({ error: "Pegá el Access Token de producción (empieza con APP_USR-)" }, { status: 400 });
     }
-    const usuario = await mpUsuario(token);
+    const paso = async <T>(nombre: string, fn: () => Promise<T>): Promise<T> => {
+      try {
+        return await fn();
+      } catch (e) {
+        const err = e as MpError;
+        throw new MpError(`${nombre}: ${err.message}`, err.detalle, err.mpStatus);
+      }
+    };
+    const usuario = await paso("Al verificar la cuenta", () => mpUsuario(token));
 
     if (!body.store_id && !body.sucursal) {
       const sucursales = await mpSucursales(token, usuario.id);
@@ -38,12 +46,14 @@ export async function POST(req: Request) {
       const d = body.sucursal as NuevaSucursal;
       const faltan = !d?.nombre || !d.calle || !d.numero || !d.ciudad || !d.provincia || !Number.isFinite(Number(d.latitud)) || !Number.isFinite(Number(d.longitud));
       if (faltan) throw new MpError("Completá todos los datos de la sucursal (incluida la ubicación)", 400);
-      const s = await mpCrearSucursal(token, usuario.id, perfil.comercio_id, { ...d, latitud: Number(d.latitud), longitud: Number(d.longitud) });
+      const s = await paso("Al crear la sucursal", () =>
+        mpCrearSucursal(token, usuario.id, perfil.comercio_id, { ...d, latitud: Number(d.latitud), longitud: Number(d.longitud) })
+      );
       storeId = s.id;
       storeNombre = s.name;
     }
 
-    const caja = await mpCrearCaja(token, storeId, perfil.comercio_id);
+    const caja = await paso("Al crear la caja", () => mpCrearCaja(token, storeId, perfil.comercio_id));
     const qr = caja.qr_response ?? caja.qr ?? {};
     const db = admin();
     await guardarToken(db, perfil.comercio_id, token);
