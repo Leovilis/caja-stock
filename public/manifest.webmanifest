@@ -1,6 +1,6 @@
 {
-  "name": "Mi Kioskito",
-  "short_name": "Mi Kioskito",
+  "name": "Mi Kiosko",
+  "short_name": "Mi Kiosko",
   "start_url": "/pos",
   "display": "standalone",
   "background_color": "#f1f5f9",

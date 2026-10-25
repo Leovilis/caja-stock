@@ -20,21 +20,21 @@ import {
 import { MARCA, linkWhatsApp } from "@/lib/marca";
 
 export const metadata: Metadata = {
-  title: "Mi Kioskito — Caja, stock y cobros con QR para tu kiosco",
+  title: "Mi Kiosko — Caja, stock y cobros con QR para tu kiosco",
   description:
     "Vendé con lector de códigos, cobrá con QR de Mercado Pago, controlá stock y vencimientos y sabé cuánto ganás de verdad. Sin instalar nada: funciona en la compu, la tablet o el celular.",
   openGraph: {
-    title: "Mi Kioskito",
+    title: "Mi Kiosko",
     description: "El sistema de caja y stock para kioscos y drugstores. Cobrá con QR, controlá la caja y sabé cuánto ganás.",
     url: `https://${MARCA.dominio}`,
-    siteName: "Mi Kioskito",
+    siteName: "Mi Kiosko",
     locale: "es_AR",
     type: "website",
   },
 };
 
-const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mi Kioskito en mi negocio.");
-const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mi Kioskito.");
+const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mi Kiosko en mi negocio.");
+const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mi Kiosko.");
 
 const FUNCIONES = [
   {
@@ -106,7 +106,7 @@ export default function Landing() {
             <span className="rounded-lg bg-brand-600 p-1.5 text-white">
               <Store size={20} />
             </span>
-            Mi Kioskito
+            Mi Kiosko
           </a>
           <nav className="hidden items-center gap-6 text-sm text-slate-600 md:flex">
             <a href="#funciones" className="hover:text-brand-600">
@@ -142,7 +142,7 @@ export default function Landing() {
               Vendé rápido, cobrá con QR y sabé <span className="text-brand-600">cuánto ganás de verdad.</span>
             </h1>
             <p className="mt-5 max-w-xl text-lg text-slate-600">
-              Mi Kioskito es la caja de tu negocio: lector de códigos, stock y vencimientos, cobros con Mercado Pago que se confirman solos y reportes que
+              Mi Kiosko es la caja de tu negocio: lector de códigos, stock y vencimientos, cobros con Mercado Pago que se confirman solos y reportes que
               descuentan las comisiones. Todo desde la compu del mostrador o desde tu celular.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
@@ -239,7 +239,7 @@ export default function Landing() {
             <p className="mb-2 text-sm font-bold uppercase tracking-wider text-sky-300">Cobro con QR automático</p>
             <h2 className="text-3xl font-extrabold">Dejá de mirar el celular para ver si te pagaron</h2>
             <p className="mt-4 text-slate-300">
-              Con Mi Kioskito la caja le pide el cobro a Mercado Pago por el monto exacto. El cliente escanea, paga y la venta se registra sola, con el medio
+              Con Mi Kiosko la caja le pide el cobro a Mercado Pago por el monto exacto. El cliente escanea, paga y la venta se registra sola, con el medio
               que usó y su comisión. Si no paga, no hay venta: los comprobantes falsos no sirven.
             </p>
             <ol className="mt-6 space-y-3 text-sm">
@@ -313,7 +313,7 @@ export default function Landing() {
                   ))}
                 </ul>
                 <a
-                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.nombre} de Mi Kioskito.`)}
+                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.nombre} de Mi Kiosko.`)}
                   className={`mt-6 block rounded-xl px-4 py-3 text-center font-semibold ${
                     p.destacado ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-slate-300 text-slate-800 hover:bg-slate-50"
                   }`}
@@ -364,7 +364,7 @@ export default function Landing() {
       <footer className="border-t border-slate-100">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-sm text-slate-500">
           <span className="flex items-center gap-2">
-            <Store size={16} className="text-brand-600" /> Mi Kioskito · {MARCA.dominio}
+            <Store size={16} className="text-brand-600" /> Mi Kiosko · {MARCA.dominio}
           </span>
           <span className="flex gap-4">
             <a href={WA_CONSULTA} className="hover:text-brand-600">

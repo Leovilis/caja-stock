@@ -3,8 +3,8 @@ import { MARCA } from "@/lib/marca";
 
 /**
  * Un solo deploy para dos direcciones:
- *  - mikioskito.com.ar (y www.)  → página de presentación
- *  - app.mikioskito.com.ar       → la aplicación (y también *.vercel.app y localhost)
+ *  - mikiosko.com.ar (y www.)  → página de presentación
+ *  - app.mikiosko.com.ar       → la aplicación (y también *.vercel.app y localhost)
  */
 export function middleware(req: NextRequest) {
   const host = (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
