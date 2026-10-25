@@ -1,6 +1,6 @@
 {
-  "name": "Caja & Stock",
-  "short_name": "Caja",
+  "name": "Mi Kioskito",
+  "short_name": "Mi Kioskito",
   "start_url": "/pos",
   "display": "standalone",
   "background_color": "#f1f5f9",

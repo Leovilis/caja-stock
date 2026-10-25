@@ -94,7 +94,7 @@ export default function LoginPage() {
           <div className="rounded-xl bg-brand-600 p-3 text-white">
             <Store size={28} />
           </div>
-          <h1 className="text-xl font-bold">Caja & Stock</h1>
+          <h1 className="text-xl font-bold">Mi Kioskito</h1>
           <p className="text-sm text-slate-500">
             {primeraVez ? "Configuración inicial: creá el administrador general" : registro ? "Creá tu cuenta con el email con el que te invitaron" : "Ingresá a tu cuenta"}
           </p>
