@@ -113,6 +113,9 @@ export default function LoginPage() {
             ¿Olvidaste tu contraseña?
           </button>
         )}
+        {!primeraVez && !registro && (
+          <p className="mt-1 text-center text-[11px] text-slate-400">Si sos vendedor, pedile una nueva al administrador de tu comercio.</p>
+        )}
         {primeraVez === false && (
           <button onClick={() => setRegistro(!registro)} className="mt-2 w-full text-center text-xs text-slate-500 hover:text-brand-600">
             {registro ? "Ya tengo cuenta: ingresar" : "¿Te invitaron a un comercio? Creá tu cuenta"}

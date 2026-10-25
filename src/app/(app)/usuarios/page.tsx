@@ -54,7 +54,7 @@ export default function UsuariosPage() {
 
   return (
     <div>
-      <PageHeader title="Usuarios" subtitle="Administradores ven todo; vendedores sólo caja, ventas del día y consulta de productos">
+      <PageHeader title="Usuarios" subtitle="Administradores ven todo; vendedores sólo caja, ventas del día y consulta de productos. Las contraseñas de los vendedores las manejás vos (llave).">
         <button className="btn-primary" onClick={() => setNuevo(true)}>
           <Plus size={16} /> Nuevo usuario
         </button>
@@ -109,7 +109,13 @@ export default function UsuariosPage() {
         </table>
       </div>
 
-      <CambiarClaveModal email={clave?.email ?? null} nombre={clave?.nombre} propia={clave?.id === perfil?.id} onClose={() => setClave(null)} />
+      <CambiarClaveModal
+        email={clave?.email ?? null}
+        nombre={clave?.nombre}
+        propia={clave?.id === perfil?.id}
+        permitirEmail={clave?.rol === "admin"}
+        onClose={() => setClave(null)}
+      />
 
       <Modal open={nuevo} onClose={() => setNuevo(false)} title="Nuevo usuario" size="sm">
         <form

@@ -188,9 +188,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="border-t border-slate-800 p-4">
         <div className="truncate text-sm font-medium text-white">{modoAdmin ? user.email : perfil!.nombre}</div>
         <div className="text-xs capitalize text-slate-400">{modoAdmin ? "Administrador general" : perfil!.rol}</div>
-        <button onClick={() => setMiClave(true)} className="mt-3 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
-          <KeyRound size={14} /> Cambiar mi contraseña
-        </button>
+        {(esAdmin || modoAdmin) && (
+          <button onClick={() => setMiClave(true)} className="mt-3 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
+            <KeyRound size={14} /> Cambiar mi contraseña
+          </button>
+        )}
         <button onClick={salir} className="mt-2 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
           <LogOut size={14} /> Cerrar sesión
         </button>

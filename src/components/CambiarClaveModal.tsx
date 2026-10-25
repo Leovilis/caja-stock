@@ -16,11 +16,14 @@ export function CambiarClaveModal({
   email,
   nombre,
   propia,
+  permitirEmail = true,
   onClose,
 }: {
   email: string | null; // null = cerrado
   nombre?: string;
   propia: boolean;
+  /** ofrecer "mandarle el email para que la elija" (no para vendedores: su clave la maneja el admin) */
+  permitirEmail?: boolean;
   onClose: () => void;
 }) {
   const [actual, setActual] = useState("");
@@ -91,7 +94,7 @@ export function CambiarClaveModal({
         <button className="btn-primary w-full" disabled={guardando}>
           {guardando ? "Guardando…" : "Cambiar contraseña"}
         </button>
-        {!propia && (
+        {!propia && permitirEmail && (
           <button type="button" onClick={enviarEmail} className="w-full text-center text-xs text-slate-500 hover:text-brand-600">
             o enviarle un email para que la elija él/ella
           </button>

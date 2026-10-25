@@ -518,7 +518,8 @@ begin
 end $$;
 
 -- Cambio de contraseña.
---   * La propia: cualquiera, indicando la contraseña actual.
+--   * La propia: admins y administrador general, indicando la actual. Los VENDEDORES no:
+--     su contraseña la maneja el admin de su comercio.
 --   * La de otro: el admin, sólo de usuarios de SU comercio; el administrador general, de cualquier usuario de comercio.
 --   Al cambiar la de otro se cierran sus sesiones abiertas.
 create or replace function cambiar_clave(p_email text, p_nueva text, p_actual text default null) returns void
@@ -531,6 +532,9 @@ begin
   if v_uid is null then raise exception 'Usuario inexistente'; end if;
 
   if v_uid = auth.uid() then
+    if not es_superadmin() and not es_admin() then
+      raise exception 'Tu contraseña la cambia el administrador de tu comercio';
+    end if;
     if v_hash is null or v_hash <> crypt(coalesce(p_actual, ''), v_hash) then
       raise exception 'La contraseña actual no es correcta';
     end if;
@@ -547,6 +551,7 @@ begin
     end if;
   end if;
 
+  perform set_config('caja.cambio_clave', 'si', true);  -- habilita el cambio para el trigger de abajo
   update auth.users set encrypted_password = crypt(p_nueva, gen_salt('bf')), updated_at = now() where id = v_uid;
 
   -- a otro usuario: cerrar sus sesiones (vuelve a ingresar con la nueva)
@@ -559,6 +564,24 @@ begin
     end if;
   end if;
 end $$;
+
+-- Resguardo: un vendedor no puede cambiar su contraseña por su cuenta (ni con el email de
+-- "olvidé mi contraseña" ni llamando a la API de Supabase). Sólo cambia por cambiar_clave()
+-- (lo hace su admin) o desde el SQL Editor. El cambio no autorizado se ignora en silencio.
+create or replace function _proteger_clave_vendedor() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.encrypted_password is distinct from old.encrypted_password
+     and coalesce(current_setting('caja.cambio_clave', true), '') <> 'si'
+     and session_user not in ('postgres', 'supabase_admin')
+     and exists (select 1 from perfiles where id = new.id and rol = 'vendedor') then
+    new.encrypted_password := old.encrypted_password;
+  end if;
+  return new;
+end $$;
+drop trigger if exists proteger_clave_vendedor on auth.users;
+create trigger proteger_clave_vendedor before update of encrypted_password on auth.users
+  for each row execute function _proteger_clave_vendedor();
 
 -- ---------------------------------------------------------------------
 -- PANEL DEL ADMINISTRADOR GENERAL (superadmin)
@@ -1123,7 +1146,7 @@ create trigger proteger_stock before update on productos for each row execute fu
 -- ---------------------------------------------------------------------
 -- Internas: nadie las llama directo desde el navegador
 revoke all on function _perfil_activo, _perfil_base, _exigir_admin, _exigir_superadmin, _exigir_modulo, _licencia_vigente,
-  _crear_comercio, _invitar, _nuevo_usuario from public, anon, authenticated;
+  _crear_comercio, _invitar, _nuevo_usuario, _proteger_clave_vendedor from public, anon, authenticated;
 -- Credenciales ARCA: sólo el servidor
 revoke all on function arca_guardar_credenciales, arca_credenciales from public, anon, authenticated;
 do $$ begin
