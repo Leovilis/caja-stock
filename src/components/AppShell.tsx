@@ -79,17 +79,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (perfil && fueraDelPlan) router.replace("/pos");
   }, [perfil, fueraDelPlan, router]);
 
-  // licencia.id se completa cuando terminó de cargar el comercio (y con él, si es superadmin)
-  const listo = !!licencia.id;
+  // Administrador general sin comercio: sólo administra clientes (no vende)
+  const modoAdmin = esSuperadmin && !perfil?.activo;
   useEffect(() => {
-    if (listo && !esSuperadmin && SOLO_SUPERADMIN.includes(path)) router.replace("/pos");
-  }, [listo, esSuperadmin, path, router]);
+    if (cargando || !user) return;
+    if (!esSuperadmin && SOLO_SUPERADMIN.includes(path)) router.replace("/pos");
+    else if (modoAdmin && !SOLO_SUPERADMIN.includes(path)) router.replace("/clientes");
+  }, [cargando, user, esSuperadmin, modoAdmin, path, router]);
 
   useEffect(() => setAbierto(false), [path]);
 
   if (cargando || !user) return <Loading />;
 
-  if (!perfil || !perfil.activo) {
+  if (!modoAdmin && (!perfil || !perfil.activo)) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="card max-w-sm p-6 text-center">
@@ -105,13 +107,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const items = NAV.filter((n) => (n.superadmin ? esSuperadmin : (esAdmin || !n.admin) && (!n.modulo || modulo(n.modulo))));
+  const items = modoAdmin
+    ? NAV.filter((n) => n.superadmin)
+    : NAV.filter((n) => (n.superadmin ? esSuperadmin : (esAdmin || !n.admin) && (!n.modulo || modulo(n.modulo))));
   const esBasico = licencia.plan === "basico";
   const contacto = licencia.contacto || "tu proveedor del sistema";
   // Con plan básico y fecha de vencimiento lo tratamos como prueba; con plan completo, como abono
   const esPrueba = esBasico;
   const quien = esPrueba ? "La prueba" : "La licencia";
-  const aviso = !licencia.activo ? (
+  const aviso = modoAdmin ? null : !licencia.activo ? (
     <div className="flex items-start gap-2 bg-rose-600 px-4 py-2 text-sm text-white">
       <Lock size={16} className="mt-0.5 shrink-0" />
       <span>
@@ -142,23 +146,25 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Store size={20} />
         </div>
         <div className="min-w-0">
-          <div className="truncate font-bold text-white">{config.nombre}</div>
-          <div className="text-xs text-slate-400">Caja & Stock{esBasico && " · Plan básico"}</div>
+          <div className="truncate font-bold text-white">{modoAdmin ? "Caja & Stock" : config.nombre}</div>
+          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Caja & Stock${esBasico ? " · Plan básico" : ""}`}</div>
         </div>
       </div>
-      <div className="mx-4 mb-3 rounded-lg bg-slate-800 px-3 py-2 text-xs">
-        Caja:{" "}
-        {caja ? (
-          <span className="font-semibold text-emerald-400">ABIERTA</span>
-        ) : (
-          <span className="font-semibold text-rose-400">CERRADA</span>
-        )}
-        {diasRestantes !== null && (
-          <div className={`mt-1 ${diasRestantes < 0 ? "text-rose-400" : "text-slate-400"}`}>
-            {diasRestantes < 0 ? "Licencia vencida" : `${esPrueba ? "Prueba" : "Licencia"} hasta el ${fechaCorta(licencia.vence!)}`}
-          </div>
-        )}
-      </div>
+      {!modoAdmin && (
+        <div className="mx-4 mb-3 rounded-lg bg-slate-800 px-3 py-2 text-xs">
+          Caja:{" "}
+          {caja ? (
+            <span className="font-semibold text-emerald-400">ABIERTA</span>
+          ) : (
+            <span className="font-semibold text-rose-400">CERRADA</span>
+          )}
+          {diasRestantes !== null && (
+            <div className={`mt-1 ${diasRestantes < 0 ? "text-rose-400" : "text-slate-400"}`}>
+              {diasRestantes < 0 ? "Licencia vencida" : `${esPrueba ? "Prueba" : "Licencia"} hasta el ${fechaCorta(licencia.vence!)}`}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex-1 space-y-0.5 overflow-y-auto px-3">
         {items.map(({ href, label, icon: Icon }) => {
           const activo = href === "/" ? path === "/" : path.startsWith(href);
@@ -177,8 +183,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
       </div>
       <div className="border-t border-slate-800 p-4">
-        <div className="truncate text-sm font-medium text-white">{perfil.nombre}</div>
-        <div className="text-xs capitalize text-slate-400">{perfil.rol}</div>
+        <div className="truncate text-sm font-medium text-white">{modoAdmin ? user.email : perfil!.nombre}</div>
+        <div className="text-xs capitalize text-slate-400">{modoAdmin ? "Administrador general" : perfil!.rol}</div>
         <button onClick={salir} className="mt-3 flex items-center gap-2 text-xs text-slate-400 hover:text-white">
           <LogOut size={14} /> Cerrar sesión
         </button>
@@ -203,7 +209,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button onClick={() => setAbierto(true)} aria-label="Menú">
             <Menu />
           </button>
-          <span className="font-semibold">{config.nombre}</span>
+          <span className="font-semibold">{modoAdmin ? "Administración general" : config.nombre}</span>
         </header>
         {aviso}
         <main className={esPOS ? "flex-1 p-3 lg:p-4" : "flex-1 p-4 lg:p-8"}>{children}</main>

@@ -7,7 +7,9 @@
 --
 --  Todos los datos actuales (productos, ventas, cajas, usuarios…) pasan a un
 --  comercio con el nombre de tu configuración, plan completo y sin vencimiento.
---  El primer administrador queda como ADMINISTRADOR GENERAL (gestiona clientes).
+--  Tus usuarios siguen igual (el admin sigue siendo admin de ese comercio).
+--  El ADMINISTRADOR GENERAL (gestiona clientes, no vende) se crea después desde
+--  la pantalla de login, con OTRO email (ej: tuemail+admin@gmail.com).
 --  Si algo falla no se cambia nada (todo corre en una transacción).
 -- =====================================================================
 
@@ -81,19 +83,17 @@ begin
     and not exists (select 1 from ventas v where v.usuario_id = perfiles.id)
     and not exists (select 1 from cajas c where c.abierta_por = perfiles.id);
 
-  -- Administrador general = el primer admin activo
+  -- Administrador general: se crea después desde el login (la tabla queda vacía)
   create table superadmins (
     user_id  uuid primary key references auth.users(id) on delete cascade,
     creado   timestamptz not null default now()
   );
-  insert into superadmins (user_id)
-  select id from perfiles where rol = 'admin' and activo order by creado limit 1;
 
   -- La tabla licencia (plan básico v1.2) queda reemplazada por comercios
   drop table if exists licencia cascade;
   drop function if exists sistema_inicializado();
 
-  raise notice 'Migración lista: comercio "%" (%). Ahora corré schema.sql.', coalesce(nullif(v_nombre, ''), 'Mi comercio'), v_com;
+  raise notice 'Migración lista: comercio "%" (%). Ahora corré schema.sql y después creá el administrador general desde el login.', coalesce(nullif(v_nombre, ''), 'Mi comercio'), v_com;
 end $$;
 
 commit;

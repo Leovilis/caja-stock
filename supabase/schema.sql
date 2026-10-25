@@ -454,7 +454,8 @@ begin
 end $$;
 
 -- Al registrarse un usuario:
---   * el PRIMERO de toda la base es el administrador general y dueño de un comercio con plan completo;
+--   * el PRIMERO de toda la base es el administrador general: gestiona clientes, NO tiene comercio
+--     (si quiere vender, crea su propio comercio desde Clientes con otro email);
 --   * si su email tiene una invitación, queda activo en ese comercio con ese rol;
 --   * si no, no se le crea perfil (ve "usuario sin acceso").
 create or replace function _nuevo_usuario() returns trigger
@@ -464,8 +465,6 @@ begin
   perform pg_advisory_xact_lock(424242);
   v_nombre := coalesce(nullif(new.raw_user_meta_data->>'nombre', ''), split_part(new.email, '@', 1));
   if not exists (select 1 from superadmins) then
-    v_com := _crear_comercio('Mi comercio', 'completo', null, '');
-    insert into perfiles (id, comercio_id, email, nombre, rol, activo) values (new.id, v_com, new.email, v_nombre, 'admin', true);
     insert into superadmins (user_id) values (new.id);
     return new;
   end if;
@@ -492,6 +491,9 @@ begin
   if p_rol not in ('admin', 'vendedor') then raise exception 'Rol inválido'; end if;
   select id into v_user from auth.users where lower(email) = v_email;
   if v_user is not null then
+    if exists (select 1 from superadmins where user_id = v_user) then
+      raise exception 'Ese email es del administrador general: para un comercio usá otro email';
+    end if;
     select comercio_id into v_otro from perfiles where id = v_user;
     if v_otro is not null then raise exception 'Ese email ya tiene cuenta en otro comercio (o en este)'; end if;
     insert into perfiles (id, comercio_id, email, nombre, rol, activo)

@@ -94,7 +94,7 @@ export default function ClientesPage() {
 
   return (
     <div>
-      <PageHeader title="Clientes" subtitle="Comercios que usan el sistema: plan, vencimiento y actividad">
+      <PageHeader title="Clientes" subtitle="Comercios que usan el sistema: plan, vencimiento y actividad. Si vos también vendés, creá tu propio comercio con otro email.">
         <button className="btn-ghost" onClick={recargar} title="Actualizar">
           <RefreshCw size={16} />
         </button>

@@ -61,8 +61,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cargarPerfil = useCallback(async (uid: string) => {
-    const { data } = await supabase.from("perfiles").select("*").eq("id", uid).maybeSingle();
+    const [{ data }, sa] = await Promise.all([
+      supabase.from("perfiles").select("*").eq("id", uid).maybeSingle(),
+      supabase.rpc("es_superadmin"),
+    ]);
     setPerfil((data as Perfil) ?? null);
+    setEsSuperadmin(sa.data === true);
     setCargandoPerfil(false);
   }, []);
 
@@ -98,7 +102,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { data } = await supabase.from("comercios").select("id, nombre, plan, vence, activo, contacto").eq("id", comercioId).maybeSingle();
       if (data) setLicencia({ ...LICENCIA_DEFAULT, ...(data as Partial<Licencia>) });
     };
-    supabase.rpc("es_superadmin").then(({ data }) => setEsSuperadmin(data === true));
     cargarConfig();
     cargarCaja();
     cargarLicencia();

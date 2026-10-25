@@ -22,7 +22,7 @@ const traducir = (m: string) =>
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, perfil, esAdmin } = useApp();
+  const { user, perfil, esAdmin, esSuperadmin, cargando } = useApp();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [nombre, setNombre] = useState("");
@@ -49,8 +49,11 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    if (user && perfil) router.replace(esAdmin ? "/" : "/pos");
-  }, [user, perfil, esAdmin, router]);
+    if (!user || cargando) return;
+    if (perfil) router.replace(esAdmin ? "/" : "/pos");
+    else if (esSuperadmin) router.replace("/clientes");
+    else router.replace("/pos"); // sin comercio: la app muestra "usuario sin acceso" con la opción de salir
+  }, [user, perfil, esAdmin, esSuperadmin, cargando, router]);
 
   async function ingresar(e: FormEvent) {
     e.preventDefault();
