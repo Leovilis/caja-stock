@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
-import { ArrowRight, MessageCircle, Plus } from "lucide-react";
-import { MARCA, linkWhatsApp } from "@/lib/marca";
+import { ArrowRight, Plus } from "lucide-react";
+import { MARCA } from "@/lib/marca";
+import { FormConsulta } from "./FormConsulta";
 
 // Fuentes guardadas en el proyecto (licencia OFL): Bricolage Grotesque y JetBrains Mono
 const display = localFont({
@@ -36,8 +37,8 @@ export const metadata: Metadata = {
   },
 };
 
-const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mostrador en mi negocio.");
-const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mostrador.");
+// Todos los botones llevan al formulario del final (que también ofrece WhatsApp si está configurado)
+const A_PRUEBA = "#probar";
 
 /* Paleta: papel, tinta, naranja, amarillo cenefa */
 const C = { papel: "#F6F1E7", tinta: "#16130F", naranja: "#FF5B1F", cenefa: "#FFD43B" };
@@ -150,7 +151,7 @@ export default function Landing() {
             verdad.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-5">
-            <a href={WA_PRUEBA} className="group inline-flex items-center gap-3 rounded-full py-3 pl-7 pr-3 text-lg font-semibold text-white" style={{ background: C.tinta }}>
+            <a href={A_PRUEBA} className="group inline-flex items-center gap-3 rounded-full py-3 pl-7 pr-3 text-lg font-semibold text-white" style={{ background: C.tinta }}>
               Probalo gratis
               <span className="flex h-9 w-9 items-center justify-center rounded-full transition group-hover:translate-x-1" style={{ background: C.naranja }}>
                 <ArrowRight size={18} />
@@ -311,7 +312,7 @@ export default function Landing() {
                 </ul>
                 <div className="my-4 border-t-2 border-dashed border-black/20" />
                 <a
-                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.n} de Mostrador.`)}
+                  href={p.n === "Básico" ? "#plan-basico" : "#plan-completo"}
                   className="flex items-center justify-between rounded-full px-5 py-3 font-semibold"
                   style={p.dest ? { background: C.tinta, color: "#fff" } : { border: `2px solid ${C.tinta}` }}
                 >
@@ -340,19 +341,26 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Cierre */}
-      <section className="px-5 pb-10">
-        <div className="mx-auto max-w-6xl rounded-[2rem] px-6 py-16 text-center md:py-20" style={{ background: C.naranja, color: C.tinta }}>
-          <p className="mono text-xs font-bold uppercase tracking-widest">Cartel de la puerta</p>
-          <h2 className="mt-3 text-6xl font-extrabold tracking-tight md:text-8xl">ABIERTO</h2>
-          <p className="mx-auto mt-4 max-w-md text-lg">Escribinos y en el día te dejamos la cuenta lista para empezar a vender.</p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <a href={WA_PRUEBA} className="inline-flex items-center gap-2 rounded-full px-7 py-4 font-semibold text-white" style={{ background: C.tinta }}>
-              <MessageCircle size={18} /> Escribinos por WhatsApp
+      {/* Cierre + formulario */}
+      <section id="contacto" className="px-5 pb-10">
+        <span id="probar" className="block scroll-mt-6" aria-hidden />
+        <span id="plan-basico" className="block scroll-mt-6" aria-hidden />
+        <span id="plan-completo" className="block scroll-mt-6" aria-hidden />
+        <div className="mx-auto grid max-w-6xl items-center gap-10 rounded-[2rem] px-6 py-14 md:px-12 md:py-16 lg:grid-cols-[1fr_1.1fr]" style={{ background: C.naranja, color: C.tinta }}>
+          <div className="text-center lg:text-left">
+            <p className="mono text-xs font-bold uppercase tracking-widest">Cartel de la puerta</p>
+            <h2 className="mt-3 text-6xl font-extrabold tracking-tight md:text-8xl">ABIERTO</h2>
+            <p className="mx-auto mt-4 max-w-md text-lg lg:mx-0">
+              Dejanos tus datos y en el día te creamos la cuenta para que pruebes Mostrador en tu negocio, o te pasamos el precio del plan que elijas.
+            </p>
+            <a href={`${MARCA.urlApp}/login`} className="mono mt-6 inline-block text-sm font-bold uppercase tracking-widest underline decoration-2 underline-offset-4">
+              Ya tengo cuenta: ingresar
             </a>
-            <a href={`${MARCA.urlApp}/login`} className="rounded-full border-2 px-7 py-4 font-semibold" style={{ borderColor: C.tinta }}>
-              Ya tengo cuenta
-            </a>
+          </div>
+          <div className="mx-auto w-full max-w-lg drop-shadow-[0_18px_30px_rgba(22,19,15,0.25)]">
+            <Dientes arriba />
+            <FormConsulta />
+            <Dientes />
           </div>
         </div>
       </section>
@@ -360,7 +368,7 @@ export default function Landing() {
       <footer className="mono mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-8 text-xs uppercase tracking-widest opacity-70">
         <span>mostrador · {MARCA.dominio}</span>
         <span className="flex gap-5">
-          <a href={WA_CONSULTA} className="hover:underline">
+          <a href="#probar" className="hover:underline">
             Contacto
           </a>
           <a href={`${MARCA.urlApp}/login`} className="hover:underline">

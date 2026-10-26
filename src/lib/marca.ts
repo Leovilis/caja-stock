@@ -9,4 +9,4 @@ export const MARCA = {
 
 /** Link de WhatsApp con mensaje armado (si no hay número configurado, lleva a la app) */
 export const linkWhatsApp = (mensaje: string) =>
-  MARCA.whatsapp ? `https://wa.me/${MARCA.whatsapp}?text=${encodeURIComponent(mensaje)}` : `${MARCA.urlApp}/login`;
+  MARCA.whatsapp ? `https://wa.me/${MARCA.whatsapp}?text=${encodeURIComponent(mensaje)}` : "#probar";

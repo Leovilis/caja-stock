@@ -10,6 +10,7 @@ import { fechaHora, isoDate, money, number } from "@/lib/format";
 import type { ComercioAdmin, Plan } from "@/lib/types";
 import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
 import { CambiarClaveModal } from "@/components/CambiarClaveModal";
+import { ConsultasPanel } from "@/components/ConsultasPanel";
 
 const hoyAR = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
 const sumarDias = (iso: string, dias: number) => {
@@ -110,6 +111,8 @@ export default function ClientesPage() {
         <Stat label="Vencen en 7 días" value={resumen.porVencer} tone="amber" />
         <Stat label="Vencidos / suspendidos" value={resumen.vencidos} tone="red" />
       </div>
+
+      <ConsultasPanel />
 
       <div className="card overflow-x-auto">
         <div className="p-3">

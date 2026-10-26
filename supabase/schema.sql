@@ -264,6 +264,23 @@ create table if not exists pagos_proveedor (
 );
 alter table movimientos_caja add column if not exists pago_proveedor_id uuid;
 
+-- Consultas que llegan desde la página de presentación (mikiosko.com.ar).
+-- Las inserta sólo el servidor (/api/consulta); las ve y atiende sólo el superadmin.
+create table if not exists consultas (
+  id        uuid primary key default gen_random_uuid(),
+  creado    timestamptz not null default now(),
+  nombre    text not null check (length(nombre) between 1 and 120),
+  negocio   text not null default '' check (length(negocio) <= 120),
+  telefono  text not null default '' check (length(telefono) <= 40),
+  email     text not null default '' check (length(email) <= 160),
+  plan      text not null default '' check (length(plan) <= 40),
+  mensaje   text not null default '' check (length(mensaje) <= 2000),
+  origen    text not null default '',          -- huella de IP (para limitar spam), no la IP
+  atendida  timestamptz,
+  nota      text not null default ''
+);
+create index if not exists consultas_idx on consultas (creado desc);
+
 -- Mercado Pago (cobro con QR automático): cuenta conectada y cobros generados.
 -- El access token NO está acá: se guarda cifrado en Vault (mp_guardar_token).
 create table if not exists mp_cuentas (
@@ -671,6 +688,15 @@ create trigger proteger_clave_vendedor before update of encrypted_password on au
 -- PANEL DEL ADMINISTRADOR GENERAL (superadmin)
 --   Gestiona comercios (plan, vencimiento, suspensión). No ve ventas ni productos de otros.
 -- ---------------------------------------------------------------------
+create or replace function admin_consulta_atendida(p_id uuid, p_atendida boolean, p_nota text default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _exigir_superadmin();
+  update consultas set atendida = case when p_atendida then coalesce(atendida, now()) end,
+                       nota = coalesce(left(p_nota, 1000), nota)
+   where id = p_id;
+end $$;
+
 create or replace function admin_comercios() returns table (
   id uuid, nombre text, plan text, vence date, activo boolean, contacto text, notas text, creado timestamptz,
   usuarios bigint, dueno text, ventas_30d bigint, total_30d numeric, ultima_venta timestamptz, productos bigint
@@ -1417,7 +1443,7 @@ declare t text;
 begin
   foreach t in array array['comercios','superadmins','invitaciones','perfiles','config','proveedores','productos','cajas',
                            'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta',
-                           'vencimientos','mp_cuentas','mp_cobros','pagos_proveedor'] loop
+                           'vencimientos','mp_cuentas','mp_cobros','pagos_proveedor','consultas'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;
@@ -1471,6 +1497,7 @@ create policy gastos_sel on gastos for select
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('gastos')));
 create policy gastos_del on gastos for delete
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and caja_id is null and (select modulo_habilitado('gastos')));
+create policy consultas_sel on consultas for select using ((select es_superadmin()));
 create policy pagos_proveedor_sel on pagos_proveedor for select
   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('compras')));
 create policy mp_cuentas_sel on mp_cuentas for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
@@ -1520,10 +1547,10 @@ end $$;
 
 revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
   registrar_pago_proveedor, anular_pago_proveedor, registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
-  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave from public, anon;
+  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_consulta_atendida, admin_invitar, cambiar_clave from public, anon;
 grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
   registrar_pago_proveedor, anular_pago_proveedor, registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
-  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave,
+  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_consulta_atendida, admin_invitar, cambiar_clave,
   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;
 grant execute on function sistema_inicializado to anon, authenticated;
 
