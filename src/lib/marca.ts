@@ -1,6 +1,6 @@
 // Marca y dominios (un solo lugar para cambiarlos)
 export const MARCA = {
-  nombre: "Mi Kiosko",
+  nombre: "Mostrador",
   dominio: "mikiosko.com.ar",
   urlApp: "https://app.mikiosko.com.ar",
   /** WhatsApp de contacto, sólo números con código de país (ej: 5493884123456). Se configura en Vercel. */

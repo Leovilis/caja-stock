@@ -91,9 +91,12 @@ export default function LoginPage() {
           <div className="rounded-xl bg-brand-600 p-3 text-white">
             <Store size={28} />
           </div>
-          <h1 className="text-xl font-bold">Mi Kiosko</h1>
+          <div className="text-center">
+            <h1 className="text-2xl font-extrabold tracking-tight">Mostrador</h1>
+            <div className="text-xs text-slate-500">caja y stock para tu negocio</div>
+          </div>
           <p className="text-sm text-slate-500">
-            {primeraVez ? "Configuración inicial: creá el administrador general"  : "Ingresá a tu cuenta"}
+            {primeraVez ? "Configuración inicial: creá el administrador general" : "Ingresá a tu cuenta"}
           </p>
         </div>
         {diagnostico && <div className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{diagnostico}</div>}
@@ -102,7 +105,7 @@ export default function LoginPage() {
           <input className="input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           <input className="input" type="password" placeholder="Contraseña" value={pass} onChange={(e) => setPass(e.target.value)} required minLength={6} />
           <button className="btn-primary w-full" disabled={enviando || primeraVez === null}>
-            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general"  : "Ingresar"}
+            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general" : "Ingresar"}
           </button>
         </form>
         {!primeraVez && (

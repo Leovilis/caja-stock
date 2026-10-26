@@ -154,8 +154,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Store size={20} />
         </div>
         <div className="min-w-0">
-          <div className="truncate font-bold text-white">{modoAdmin ? "Mi Kiosko" : config.nombre}</div>
-          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Mi Kiosko${esBasico ? " · Plan básico" : ""}`}</div>
+          <div className="truncate font-bold text-white">{modoAdmin ? "Mostrador" : config.nombre}</div>
+          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Mostrador${esBasico ? " · Plan básico" : ""}`}</div>
         </div>
       </div>
       {!modoAdmin && (

@@ -5,8 +5,8 @@ import { RecuperarClave } from "@/components/RecuperarClave";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mi Kiosko",
-  description: "Caja, stock y ventas para tu kiosco o drugstore",
+  title: "Mostrador — caja y stock para tu negocio",
+  description: "Caja y stock para tu negocio",
   manifest: "/manifest.webmanifest",
 };
 

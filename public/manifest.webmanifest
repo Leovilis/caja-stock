@@ -1,6 +1,6 @@
 {
-  "name": "Mi Kiosko",
-  "short_name": "Mi Kiosko",
+  "name": "Mostrador — caja y stock",
+  "short_name": "Mostrador",
   "start_url": "/pos",
   "display": "standalone",
   "background_color": "#f1f5f9",
