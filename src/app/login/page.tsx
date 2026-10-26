@@ -28,8 +28,7 @@ export default function LoginPage() {
   const [nombre, setNombre] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [primeraVez, setPrimeraVez] = useState<boolean | null>(null);
-  const [registro, setRegistro] = useState(false); // "me invitaron: crear mi cuenta"
-  const alta = primeraVez || registro;
+  const alta = !!primeraVez; // las cuentas las crea el superadmin o el admin del comercio
   const [diagnostico, setDiagnostico] = useState<string | null>(null);
 
   // Verifica conexión, clave y que se haya corrido supabase/schema.sql
@@ -75,9 +74,7 @@ export default function LoginPage() {
     if (!data.session) {
       toast.success("Te enviamos un email para confirmar la cuenta. Después ingresá.", { duration: 8000 });
       setPrimeraVez(false);
-      setRegistro(false);
-    } else if (primeraVez) toast.success("¡Listo! Sos el administrador general");
-    // si no tenía invitación, la app muestra "usuario sin acceso"
+    } else toast.success("¡Listo! Sos el administrador general");
   }
 
   async function recuperar() {
@@ -96,7 +93,7 @@ export default function LoginPage() {
           </div>
           <h1 className="text-xl font-bold">Mi Kiosko</h1>
           <p className="text-sm text-slate-500">
-            {primeraVez ? "Configuración inicial: creá el administrador general" : registro ? "Creá tu cuenta con el email con el que te invitaron" : "Ingresá a tu cuenta"}
+            {primeraVez ? "Configuración inicial: creá el administrador general"  : "Ingresá a tu cuenta"}
           </p>
         </div>
         {diagnostico && <div className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{diagnostico}</div>}
@@ -105,21 +102,16 @@ export default function LoginPage() {
           <input className="input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           <input className="input" type="password" placeholder="Contraseña" value={pass} onChange={(e) => setPass(e.target.value)} required minLength={6} />
           <button className="btn-primary w-full" disabled={enviando || primeraVez === null}>
-            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general" : registro ? "Crear mi cuenta" : "Ingresar"}
+            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general"  : "Ingresar"}
           </button>
         </form>
-        {!primeraVez && !registro && (
+        {!primeraVez && (
           <button onClick={recuperar} className="mt-4 w-full text-center text-xs text-slate-500 hover:text-brand-600">
             ¿Olvidaste tu contraseña?
           </button>
         )}
-        {!primeraVez && !registro && (
+        {!primeraVez && (
           <p className="mt-1 text-center text-[11px] text-slate-400">Si sos vendedor, pedile una nueva al administrador de tu comercio.</p>
-        )}
-        {primeraVez === false && (
-          <button onClick={() => setRegistro(!registro)} className="mt-2 w-full text-center text-xs text-slate-500 hover:text-brand-600">
-            {registro ? "Ya tengo cuenta: ingresar" : "¿Te invitaron a un comercio? Creá tu cuenta"}
-          </button>
         )}
       </div>
     </div>
