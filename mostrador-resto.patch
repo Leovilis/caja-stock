@@ -1,0 +1,449 @@
+From 38a75382fd559241563a66ccda8ea2ca05eed2d0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 25 Oct 2026 23:57:26 +0000
+Subject: [PATCH 1/3] Dominio mikiosko.com.ar y marca Mi Kiosko
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Lc6MFUtoJbWfVdVnX2XXfM
+---
+ public/manifest.webmanifest |  4 ++--
+ src/app/landing/page.tsx    | 20 ++++++++++----------
+ src/app/layout.tsx          |  2 +-
+ src/app/login/page.tsx      |  2 +-
+ src/components/AppShell.tsx |  4 ++--
+ src/lib/marca.ts            |  6 +++---
+ src/middleware.ts           |  4 ++--
+ 7 files changed, 21 insertions(+), 21 deletions(-)
+
+diff --git a/public/manifest.webmanifest b/public/manifest.webmanifest
+index d9f6a86..59fa30e 100644
+--- a/public/manifest.webmanifest
++++ b/public/manifest.webmanifest
+@@ -1,6 +1,6 @@
+ {
+-  "name": "Mi Kioskito",
+-  "short_name": "Mi Kioskito",
++  "name": "Mi Kiosko",
++  "short_name": "Mi Kiosko",
+   "start_url": "/pos",
+   "display": "standalone",
+   "background_color": "#f1f5f9",
+diff --git a/src/app/landing/page.tsx b/src/app/landing/page.tsx
+index 9284193..5dd2184 100644
+--- a/src/app/landing/page.tsx
++++ b/src/app/landing/page.tsx
+@@ -20,21 +20,21 @@ import {
+ import { MARCA, linkWhatsApp } from "@/lib/marca";
+ 
+ export const metadata: Metadata = {
+-  title: "Mi Kioskito — Caja, stock y cobros con QR para tu kiosco",
++  title: "Mi Kiosko — Caja, stock y cobros con QR para tu kiosco",
+   description:
+     "Vendé con lector de códigos, cobrá con QR de Mercado Pago, controlá stock y vencimientos y sabé cuánto ganás de verdad. Sin instalar nada: funciona en la compu, la tablet o el celular.",
+   openGraph: {
+-    title: "Mi Kioskito",
++    title: "Mi Kiosko",
+     description: "El sistema de caja y stock para kioscos y drugstores. Cobrá con QR, controlá la caja y sabé cuánto ganás.",
+     url: `https://${MARCA.dominio}`,
+-    siteName: "Mi Kioskito",
++    siteName: "Mi Kiosko",
+     locale: "es_AR",
+     type: "website",
+   },
+ };
+ 
+-const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mi Kioskito en mi negocio.");
+-const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mi Kioskito.");
++const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mi Kiosko en mi negocio.");
++const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mi Kiosko.");
+ 
+ const FUNCIONES = [
+   {
+@@ -106,7 +106,7 @@ export default function Landing() {
+             <span className="rounded-lg bg-brand-600 p-1.5 text-white">
+               <Store size={20} />
+             </span>
+-            Mi Kioskito
++            Mi Kiosko
+           </a>
+           <nav className="hidden items-center gap-6 text-sm text-slate-600 md:flex">
+             <a href="#funciones" className="hover:text-brand-600">
+@@ -142,7 +142,7 @@ export default function Landing() {
+               Vendé rápido, cobrá con QR y sabé <span className="text-brand-600">cuánto ganás de verdad.</span>
+             </h1>
+             <p className="mt-5 max-w-xl text-lg text-slate-600">
+-              Mi Kioskito es la caja de tu negocio: lector de códigos, stock y vencimientos, cobros con Mercado Pago que se confirman solos y reportes que
++              Mi Kiosko es la caja de tu negocio: lector de códigos, stock y vencimientos, cobros con Mercado Pago que se confirman solos y reportes que
+               descuentan las comisiones. Todo desde la compu del mostrador o desde tu celular.
+             </p>
+             <div className="mt-7 flex flex-wrap gap-3">
+@@ -239,7 +239,7 @@ export default function Landing() {
+             <p className="mb-2 text-sm font-bold uppercase tracking-wider text-sky-300">Cobro con QR automático</p>
+             <h2 className="text-3xl font-extrabold">Dejá de mirar el celular para ver si te pagaron</h2>
+             <p className="mt-4 text-slate-300">
+-              Con Mi Kioskito la caja le pide el cobro a Mercado Pago por el monto exacto. El cliente escanea, paga y la venta se registra sola, con el medio
++              Con Mi Kiosko la caja le pide el cobro a Mercado Pago por el monto exacto. El cliente escanea, paga y la venta se registra sola, con el medio
+               que usó y su comisión. Si no paga, no hay venta: los comprobantes falsos no sirven.
+             </p>
+             <ol className="mt-6 space-y-3 text-sm">
+@@ -313,7 +313,7 @@ export default function Landing() {
+                   ))}
+                 </ul>
+                 <a
+-                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.nombre} de Mi Kioskito.`)}
++                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.nombre} de Mi Kiosko.`)}
+                   className={`mt-6 block rounded-xl px-4 py-3 text-center font-semibold ${
+                     p.destacado ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-slate-300 text-slate-800 hover:bg-slate-50"
+                   }`}
+@@ -364,7 +364,7 @@ export default function Landing() {
+       <footer className="border-t border-slate-100">
+         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-sm text-slate-500">
+           <span className="flex items-center gap-2">
+-            <Store size={16} className="text-brand-600" /> Mi Kioskito · {MARCA.dominio}
++            <Store size={16} className="text-brand-600" /> Mi Kiosko · {MARCA.dominio}
+           </span>
+           <span className="flex gap-4">
+             <a href={WA_CONSULTA} className="hover:text-brand-600">
+diff --git a/src/app/layout.tsx b/src/app/layout.tsx
+index 5383013..cf68623 100644
+--- a/src/app/layout.tsx
++++ b/src/app/layout.tsx
+@@ -5,7 +5,7 @@ import { RecuperarClave } from "@/components/RecuperarClave";
+ import "./globals.css";
+ 
+ export const metadata: Metadata = {
+-  title: "Mi Kioskito",
++  title: "Mi Kiosko",
+   description: "Caja, stock y ventas para tu kiosco o drugstore",
+   manifest: "/manifest.webmanifest",
+ };
+diff --git a/src/app/login/page.tsx b/src/app/login/page.tsx
+index e2f2b7d..df4451b 100644
+--- a/src/app/login/page.tsx
++++ b/src/app/login/page.tsx
+@@ -94,7 +94,7 @@ export default function LoginPage() {
+           <div className="rounded-xl bg-brand-600 p-3 text-white">
+             <Store size={28} />
+           </div>
+-          <h1 className="text-xl font-bold">Mi Kioskito</h1>
++          <h1 className="text-xl font-bold">Mi Kiosko</h1>
+           <p className="text-sm text-slate-500">
+             {primeraVez ? "Configuración inicial: creá el administrador general" : registro ? "Creá tu cuenta con el email con el que te invitaron" : "Ingresá a tu cuenta"}
+           </p>
+diff --git a/src/components/AppShell.tsx b/src/components/AppShell.tsx
+index 9bdabb7..0ea0612 100644
+--- a/src/components/AppShell.tsx
++++ b/src/components/AppShell.tsx
+@@ -154,8 +154,8 @@ export function AppShell({ children }: { children: ReactNode }) {
+           <Store size={20} />
+         </div>
+         <div className="min-w-0">
+-          <div className="truncate font-bold text-white">{modoAdmin ? "Mi Kioskito" : config.nombre}</div>
+-          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Mi Kioskito${esBasico ? " · Plan básico" : ""}`}</div>
++          <div className="truncate font-bold text-white">{modoAdmin ? "Mi Kiosko" : config.nombre}</div>
++          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Mi Kiosko${esBasico ? " · Plan básico" : ""}`}</div>
+         </div>
+       </div>
+       {!modoAdmin && (
+diff --git a/src/lib/marca.ts b/src/lib/marca.ts
+index d8d83c8..31144ba 100644
+--- a/src/lib/marca.ts
++++ b/src/lib/marca.ts
+@@ -1,8 +1,8 @@
+ // Marca y dominios (un solo lugar para cambiarlos)
+ export const MARCA = {
+-  nombre: "Mi Kioskito",
+-  dominio: "mikioskito.com.ar",
+-  urlApp: "https://app.mikioskito.com.ar",
++  nombre: "Mi Kiosko",
++  dominio: "mikiosko.com.ar",
++  urlApp: "https://app.mikiosko.com.ar",
+   /** WhatsApp de contacto, sólo números con código de país (ej: 5493884123456). Se configura en Vercel. */
+   whatsapp: (process.env.NEXT_PUBLIC_WHATSAPP_CONTACTO ?? "").replace(/\D/g, ""),
+ };
+diff --git a/src/middleware.ts b/src/middleware.ts
+index 493eae2..0cfb0ae 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -3,8 +3,8 @@ import { MARCA } from "@/lib/marca";
+ 
+ /**
+  * Un solo deploy para dos direcciones:
+- *  - mikioskito.com.ar (y www.)  → página de presentación
+- *  - app.mikioskito.com.ar       → la aplicación (y también *.vercel.app y localhost)
++ *  - mikiosko.com.ar (y www.)  → página de presentación
++ *  - app.mikiosko.com.ar       → la aplicación (y también *.vercel.app y localhost)
+  */
+ export function middleware(req: NextRequest) {
+   const host = (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
+-- 
+2.43.0
+
+
+From 84ddffd06ed120b45dcba4bdf0ad453b1296fb84 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 26 Oct 2026 00:20:05 +0000
+Subject: [PATCH 2/3] =?UTF-8?q?Login:=20quitar=20la=20creaci=C3=B3n=20de?=
+ =?UTF-8?q?=20cuenta=20por=20invitaci=C3=B3n?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Las cuentas las crea el superadmin (Clientes) o el admin del comercio (Usuarios).
+El alta queda sólo para la configuración inicial.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Lc6MFUtoJbWfVdVnX2XXfM
+---
+ src/app/login/page.tsx | 20 ++++++--------------
+ 1 file changed, 6 insertions(+), 14 deletions(-)
+
+diff --git a/src/app/login/page.tsx b/src/app/login/page.tsx
+index df4451b..803986f 100644
+--- a/src/app/login/page.tsx
++++ b/src/app/login/page.tsx
+@@ -28,8 +28,7 @@ export default function LoginPage() {
+   const [nombre, setNombre] = useState("");
+   const [enviando, setEnviando] = useState(false);
+   const [primeraVez, setPrimeraVez] = useState<boolean | null>(null);
+-  const [registro, setRegistro] = useState(false); // "me invitaron: crear mi cuenta"
+-  const alta = primeraVez || registro;
++  const alta = !!primeraVez; // las cuentas las crea el superadmin o el admin del comercio
+   const [diagnostico, setDiagnostico] = useState<string | null>(null);
+ 
+   // Verifica conexión, clave y que se haya corrido supabase/schema.sql
+@@ -75,9 +74,7 @@ export default function LoginPage() {
+     if (!data.session) {
+       toast.success("Te enviamos un email para confirmar la cuenta. Después ingresá.", { duration: 8000 });
+       setPrimeraVez(false);
+-      setRegistro(false);
+-    } else if (primeraVez) toast.success("¡Listo! Sos el administrador general");
+-    // si no tenía invitación, la app muestra "usuario sin acceso"
++    } else toast.success("¡Listo! Sos el administrador general");
+   }
+ 
+   async function recuperar() {
+@@ -96,7 +93,7 @@ export default function LoginPage() {
+           </div>
+           <h1 className="text-xl font-bold">Mi Kiosko</h1>
+           <p className="text-sm text-slate-500">
+-            {primeraVez ? "Configuración inicial: creá el administrador general" : registro ? "Creá tu cuenta con el email con el que te invitaron" : "Ingresá a tu cuenta"}
++            {primeraVez ? "Configuración inicial: creá el administrador general"  : "Ingresá a tu cuenta"}
+           </p>
+         </div>
+         {diagnostico && <div className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{diagnostico}</div>}
+@@ -105,22 +102,17 @@ export default function LoginPage() {
+           <input className="input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+           <input className="input" type="password" placeholder="Contraseña" value={pass} onChange={(e) => setPass(e.target.value)} required minLength={6} />
+           <button className="btn-primary w-full" disabled={enviando || primeraVez === null}>
+-            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general" : registro ? "Crear mi cuenta" : "Ingresar"}
++            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general"  : "Ingresar"}
+           </button>
+         </form>
+-        {!primeraVez && !registro && (
++        {!primeraVez && (
+           <button onClick={recuperar} className="mt-4 w-full text-center text-xs text-slate-500 hover:text-brand-600">
+             ¿Olvidaste tu contraseña?
+           </button>
+         )}
+-        {!primeraVez && !registro && (
++        {!primeraVez && (
+           <p className="mt-1 text-center text-[11px] text-slate-400">Si sos vendedor, pedile una nueva al administrador de tu comercio.</p>
+         )}
+-        {primeraVez === false && (
+-          <button onClick={() => setRegistro(!registro)} className="mt-2 w-full text-center text-xs text-slate-500 hover:text-brand-600">
+-            {registro ? "Ya tengo cuenta: ingresar" : "¿Te invitaron a un comercio? Creá tu cuenta"}
+-          </button>
+-        )}
+       </div>
+     </div>
+   );
+-- 
+2.43.0
+
+
+From ec50ccdd5e75dc03bb64e2e31606976cfeac5f84 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 26 Oct 2026 00:23:15 +0000
+Subject: [PATCH 3/3] =?UTF-8?q?Marca:=20Mostrador=20=E2=80=94=20caja=20y?=
+ =?UTF-8?q?=20stock=20para=20tu=20negocio?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Lc6MFUtoJbWfVdVnX2XXfM
+---
+ public/manifest.webmanifest |  4 ++--
+ src/app/landing/page.tsx    | 23 +++++++++++++----------
+ src/app/layout.tsx          |  4 ++--
+ src/app/login/page.tsx      |  9 ++++++---
+ src/components/AppShell.tsx |  4 ++--
+ src/lib/marca.ts            |  2 +-
+ 6 files changed, 26 insertions(+), 20 deletions(-)
+
+diff --git a/public/manifest.webmanifest b/public/manifest.webmanifest
+index 59fa30e..dd42d65 100644
+--- a/public/manifest.webmanifest
++++ b/public/manifest.webmanifest
+@@ -1,6 +1,6 @@
+ {
+-  "name": "Mi Kiosko",
+-  "short_name": "Mi Kiosko",
++  "name": "Mostrador — caja y stock",
++  "short_name": "Mostrador",
+   "start_url": "/pos",
+   "display": "standalone",
+   "background_color": "#f1f5f9",
+diff --git a/src/app/landing/page.tsx b/src/app/landing/page.tsx
+index 5dd2184..571e86f 100644
+--- a/src/app/landing/page.tsx
++++ b/src/app/landing/page.tsx
+@@ -20,21 +20,21 @@ import {
+ import { MARCA, linkWhatsApp } from "@/lib/marca";
+ 
+ export const metadata: Metadata = {
+-  title: "Mi Kiosko — Caja, stock y cobros con QR para tu kiosco",
++  title: "Mostrador — Caja y stock para tu negocio",
+   description:
+     "Vendé con lector de códigos, cobrá con QR de Mercado Pago, controlá stock y vencimientos y sabé cuánto ganás de verdad. Sin instalar nada: funciona en la compu, la tablet o el celular.",
+   openGraph: {
+-    title: "Mi Kiosko",
++    title: "Mostrador — Caja y stock para tu negocio",
+     description: "El sistema de caja y stock para kioscos y drugstores. Cobrá con QR, controlá la caja y sabé cuánto ganás.",
+     url: `https://${MARCA.dominio}`,
+-    siteName: "Mi Kiosko",
++    siteName: "Mostrador",
+     locale: "es_AR",
+     type: "website",
+   },
+ };
+ 
+-const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mi Kiosko en mi negocio.");
+-const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mi Kiosko.");
++const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mostrador en mi negocio.");
++const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mostrador.");
+ 
+ const FUNCIONES = [
+   {
+@@ -106,7 +106,10 @@ export default function Landing() {
+             <span className="rounded-lg bg-brand-600 p-1.5 text-white">
+               <Store size={20} />
+             </span>
+-            Mi Kiosko
++            <span>
++              Mostrador
++              <span className="ml-1.5 hidden text-xs font-medium text-slate-500 sm:inline">caja y stock para tu negocio</span>
++            </span>
+           </a>
+           <nav className="hidden items-center gap-6 text-sm text-slate-600 md:flex">
+             <a href="#funciones" className="hover:text-brand-600">
+@@ -142,7 +145,7 @@ export default function Landing() {
+               Vendé rápido, cobrá con QR y sabé <span className="text-brand-600">cuánto ganás de verdad.</span>
+             </h1>
+             <p className="mt-5 max-w-xl text-lg text-slate-600">
+-              Mi Kiosko es la caja de tu negocio: lector de códigos, stock y vencimientos, cobros con Mercado Pago que se confirman solos y reportes que
++              Mostrador es la caja de tu negocio: lector de códigos, stock y vencimientos, cobros con Mercado Pago que se confirman solos y reportes que
+               descuentan las comisiones. Todo desde la compu del mostrador o desde tu celular.
+             </p>
+             <div className="mt-7 flex flex-wrap gap-3">
+@@ -239,7 +242,7 @@ export default function Landing() {
+             <p className="mb-2 text-sm font-bold uppercase tracking-wider text-sky-300">Cobro con QR automático</p>
+             <h2 className="text-3xl font-extrabold">Dejá de mirar el celular para ver si te pagaron</h2>
+             <p className="mt-4 text-slate-300">
+-              Con Mi Kiosko la caja le pide el cobro a Mercado Pago por el monto exacto. El cliente escanea, paga y la venta se registra sola, con el medio
++              Con Mostrador la caja le pide el cobro a Mercado Pago por el monto exacto. El cliente escanea, paga y la venta se registra sola, con el medio
+               que usó y su comisión. Si no paga, no hay venta: los comprobantes falsos no sirven.
+             </p>
+             <ol className="mt-6 space-y-3 text-sm">
+@@ -313,7 +316,7 @@ export default function Landing() {
+                   ))}
+                 </ul>
+                 <a
+-                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.nombre} de Mi Kiosko.`)}
++                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.nombre} de Mostrador.`)}
+                   className={`mt-6 block rounded-xl px-4 py-3 text-center font-semibold ${
+                     p.destacado ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-slate-300 text-slate-800 hover:bg-slate-50"
+                   }`}
+@@ -364,7 +367,7 @@ export default function Landing() {
+       <footer className="border-t border-slate-100">
+         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-sm text-slate-500">
+           <span className="flex items-center gap-2">
+-            <Store size={16} className="text-brand-600" /> Mi Kiosko · {MARCA.dominio}
++            <Store size={16} className="text-brand-600" /> Mostrador · {MARCA.dominio}
+           </span>
+           <span className="flex gap-4">
+             <a href={WA_CONSULTA} className="hover:text-brand-600">
+diff --git a/src/app/layout.tsx b/src/app/layout.tsx
+index cf68623..620bf3c 100644
+--- a/src/app/layout.tsx
++++ b/src/app/layout.tsx
+@@ -5,8 +5,8 @@ import { RecuperarClave } from "@/components/RecuperarClave";
+ import "./globals.css";
+ 
+ export const metadata: Metadata = {
+-  title: "Mi Kiosko",
+-  description: "Caja, stock y ventas para tu kiosco o drugstore",
++  title: "Mostrador — caja y stock para tu negocio",
++  description: "Caja y stock para tu negocio",
+   manifest: "/manifest.webmanifest",
+ };
+ 
+diff --git a/src/app/login/page.tsx b/src/app/login/page.tsx
+index 803986f..faeef59 100644
+--- a/src/app/login/page.tsx
++++ b/src/app/login/page.tsx
+@@ -91,9 +91,12 @@ export default function LoginPage() {
+           <div className="rounded-xl bg-brand-600 p-3 text-white">
+             <Store size={28} />
+           </div>
+-          <h1 className="text-xl font-bold">Mi Kiosko</h1>
++          <div className="text-center">
++            <h1 className="text-2xl font-extrabold tracking-tight">Mostrador</h1>
++            <div className="text-xs text-slate-500">caja y stock para tu negocio</div>
++          </div>
+           <p className="text-sm text-slate-500">
+-            {primeraVez ? "Configuración inicial: creá el administrador general"  : "Ingresá a tu cuenta"}
++            {primeraVez ? "Configuración inicial: creá el administrador general" : "Ingresá a tu cuenta"}
+           </p>
+         </div>
+         {diagnostico && <div className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{diagnostico}</div>}
+@@ -102,7 +105,7 @@ export default function LoginPage() {
+           <input className="input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+           <input className="input" type="password" placeholder="Contraseña" value={pass} onChange={(e) => setPass(e.target.value)} required minLength={6} />
+           <button className="btn-primary w-full" disabled={enviando || primeraVez === null}>
+-            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general"  : "Ingresar"}
++            {enviando ? "Procesando..." : primeraVez ? "Crear administrador general" : "Ingresar"}
+           </button>
+         </form>
+         {!primeraVez && (
+diff --git a/src/components/AppShell.tsx b/src/components/AppShell.tsx
+index 0ea0612..69130f9 100644
+--- a/src/components/AppShell.tsx
++++ b/src/components/AppShell.tsx
+@@ -154,8 +154,8 @@ export function AppShell({ children }: { children: ReactNode }) {
+           <Store size={20} />
+         </div>
+         <div className="min-w-0">
+-          <div className="truncate font-bold text-white">{modoAdmin ? "Mi Kiosko" : config.nombre}</div>
+-          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Mi Kiosko${esBasico ? " · Plan básico" : ""}`}</div>
++          <div className="truncate font-bold text-white">{modoAdmin ? "Mostrador" : config.nombre}</div>
++          <div className="text-xs text-slate-400">{modoAdmin ? "Administración general" : `Mostrador${esBasico ? " · Plan básico" : ""}`}</div>
+         </div>
+       </div>
+       {!modoAdmin && (
+diff --git a/src/lib/marca.ts b/src/lib/marca.ts
+index 31144ba..8764020 100644
+--- a/src/lib/marca.ts
++++ b/src/lib/marca.ts
+@@ -1,6 +1,6 @@
+ // Marca y dominios (un solo lugar para cambiarlos)
+ export const MARCA = {
+-  nombre: "Mi Kiosko",
++  nombre: "Mostrador",
+   dominio: "mikiosko.com.ar",
+   urlApp: "https://app.mikiosko.com.ar",
+   /** WhatsApp de contacto, sólo números con código de país (ej: 5493884123456). Se configura en Vercel. */
+-- 
+2.43.0
+

@@ -1,0 +1,582 @@
+From 0863ec419aa763b4fe73c95d3f09926557d44b12 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 26 Oct 2026 00:42:41 +0000
+Subject: [PATCH] Landing: formulario de consultas y panel para el superadmin
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Probalo gratis / Consultar precio llevan a un formulario (con el plan elegido)
+- /api/consulta guarda en la tabla consultas (anti-spam: campo trampa + 5 por hora)
+- Aviso opcional por email con Resend (RESEND_API_KEY + AVISO_CONSULTAS_EMAIL)
+- Botón de WhatsApp si NEXT_PUBLIC_WHATSAPP_CONTACTO está cargada
+- Clientes: panel de consultas con WhatsApp/mail y marcar atendida
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Lc6MFUtoJbWfVdVnX2XXfM
+---
+ src/app/(app)/clientes/page.tsx   |   3 +
+ src/app/api/consulta/route.ts     |  80 +++++++++++++++++
+ src/app/landing/FormConsulta.tsx  | 115 ++++++++++++++++++++++++
+ src/app/landing/page.tsx          |  46 ++++++----
+ src/components/ConsultasPanel.tsx | 140 ++++++++++++++++++++++++++++++
+ src/lib/marca.ts                  |   2 +-
+ supabase/schema.sql               |  33 ++++++-
+ 7 files changed, 396 insertions(+), 23 deletions(-)
+ create mode 100644 src/app/api/consulta/route.ts
+ create mode 100644 src/app/landing/FormConsulta.tsx
+ create mode 100644 src/components/ConsultasPanel.tsx
+
+diff --git a/src/app/(app)/clientes/page.tsx b/src/app/(app)/clientes/page.tsx
+index e64ff88..4238814 100644
+--- a/src/app/(app)/clientes/page.tsx
++++ b/src/app/(app)/clientes/page.tsx
+@@ -10,6 +10,7 @@ import { fechaHora, isoDate, money, number } from "@/lib/format";
+ import type { ComercioAdmin, Plan } from "@/lib/types";
+ import { Badge, Empty, Field, Loading, Modal, PageHeader, Stat } from "@/components/ui";
+ import { CambiarClaveModal } from "@/components/CambiarClaveModal";
++import { ConsultasPanel } from "@/components/ConsultasPanel";
+ 
+ const hoyAR = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+ const sumarDias = (iso: string, dias: number) => {
+@@ -111,6 +112,8 @@ export default function ClientesPage() {
+         <Stat label="Vencidos / suspendidos" value={resumen.vencidos} tone="red" />
+       </div>
+ 
++      <ConsultasPanel />
++
+       <div className="card overflow-x-auto">
+         <div className="p-3">
+           <input className="input max-w-xs" placeholder="Buscar comercio, dueño o nota…" value={buscar} onChange={(e) => setBuscar(e.target.value)} />
+diff --git a/src/app/api/consulta/route.ts b/src/app/api/consulta/route.ts
+new file mode 100644
+index 0000000..cc86e39
+--- /dev/null
++++ b/src/app/api/consulta/route.ts
+@@ -0,0 +1,80 @@
++// Recibe las consultas del formulario de la página de presentación. SÓLO SERVIDOR.
++// Guarda en la tabla `consultas` (la ve el superadmin en Clientes) y, si está configurado,
++// avisa por email con Resend (RESEND_API_KEY + AVISO_CONSULTAS_EMAIL).
++import { createHash } from "crypto";
++import { NextResponse } from "next/server";
++import { admin } from "@/lib/arca/servidor";
++
++export const dynamic = "force-dynamic";
++
++const txt = (v: unknown, max: number) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, max) : "");
++const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
++
++async function avisarPorEmail(c: Record<string, string>) {
++  const key = process.env.RESEND_API_KEY?.trim();
++  const para = process.env.AVISO_CONSULTAS_EMAIL?.trim();
++  if (!key || !para) return;
++  const filas = Object.entries({ Nombre: c.nombre, Negocio: c.negocio, WhatsApp: c.telefono, Email: c.email, Plan: c.plan, Mensaje: c.mensaje })
++    .filter(([, v]) => v)
++    .map(([k, v]) => `<p><b>${k}:</b> ${esc(v)}</p>`)
++    .join("");
++  try {
++    await fetch("https://api.resend.com/emails", {
++      method: "POST",
++      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
++      body: JSON.stringify({
++        from: process.env.AVISO_CONSULTAS_DESDE?.trim() || "Mostrador <onboarding@resend.dev>",
++        to: [para],
++        reply_to: c.email || undefined,
++        subject: `Nueva consulta: ${c.nombre}${c.negocio ? ` (${c.negocio})` : ""}`,
++        html: filas,
++      }),
++    });
++  } catch {
++    /* el aviso es opcional: la consulta ya quedó guardada */
++  }
++}
++
++export async function POST(req: Request) {
++  let body: Record<string, unknown>;
++  try {
++    body = await req.json();
++  } catch {
++    return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
++  }
++
++  // trampa para robots: campo oculto que una persona nunca completa
++  if (txt(body.web, 200)) return NextResponse.json({ ok: true });
++
++  const c = {
++    nombre: txt(body.nombre, 120),
++    negocio: txt(body.negocio, 120),
++    telefono: txt(body.telefono, 40),
++    email: txt(body.email, 160).toLowerCase(),
++    plan: txt(body.plan, 40),
++    mensaje: typeof body.mensaje === "string" ? body.mensaje.trim().slice(0, 2000) : "",
++  };
++  if (!c.nombre) return NextResponse.json({ error: "Escribí tu nombre" }, { status: 400 });
++  if (!c.telefono && !c.email) return NextResponse.json({ error: "Dejanos un WhatsApp o un email para responderte" }, { status: 400 });
++  if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) return NextResponse.json({ error: "Revisá el email" }, { status: 400 });
++  if (c.telefono && c.telefono.replace(/\D/g, "").length < 8) return NextResponse.json({ error: "Revisá el número de WhatsApp" }, { status: 400 });
++
++  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "sin-ip";
++  const origen = createHash("sha256").update(`consulta:${ip}`).digest("hex").slice(0, 24);
++
++  try {
++    const db = admin();
++    const hace1h = new Date(Date.now() - 3600_000).toISOString();
++    const { count } = await db.from("consultas").select("id", { count: "exact", head: true }).eq("origen", origen).gte("creado", hace1h);
++    if ((count ?? 0) >= 5) return NextResponse.json({ error: "Ya recibimos tus consultas. Te respondemos a la brevedad." }, { status: 429 });
++
++    const { error } = await db.from("consultas").insert({ ...c, origen });
++    if (error) throw error;
++  } catch (e) {
++    console.error("consulta:", e);
++    return NextResponse.json({ error: "No pudimos enviar la consulta. Probá de nuevo en un rato." }, { status: 500 });
++  }
++
++  await avisarPorEmail(c);
++  return NextResponse.json({ ok: true });
++}
+diff --git a/src/app/landing/FormConsulta.tsx b/src/app/landing/FormConsulta.tsx
+new file mode 100644
+index 0000000..7007e8b
+--- /dev/null
++++ b/src/app/landing/FormConsulta.tsx
+@@ -0,0 +1,115 @@
++"use client";
++
++import { useEffect, useState, type FormEvent } from "react";
++import { ArrowRight, Check, MessageCircle } from "lucide-react";
++import { MARCA, linkWhatsApp } from "@/lib/marca";
++
++const PLANES = ["Prueba gratis", "Básico", "Completo", "No sé todavía"];
++/** cada botón de la página lleva a #probar, #plan-basico o #plan-completo y deja el plan elegido */
++const DESDE_HASH: Record<string, string> = { "#probar": "Prueba gratis", "#plan-basico": "Básico", "#plan-completo": "Completo" };
++
++export function FormConsulta() {
++  const [f, setF] = useState({ nombre: "", negocio: "", telefono: "", email: "", plan: "Prueba gratis", mensaje: "", web: "" });
++  const [estado, setEstado] = useState<"" | "enviando" | "ok">("");
++  const [error, setError] = useState("");
++  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
++
++  useEffect(() => {
++    const leer = () => {
++      const p = DESDE_HASH[window.location.hash];
++      if (p) setF((x) => ({ ...x, plan: p }));
++    };
++    leer();
++    window.addEventListener("hashchange", leer);
++    return () => window.removeEventListener("hashchange", leer);
++  }, []);
++
++  async function enviar(e: FormEvent) {
++    e.preventDefault();
++    setError("");
++    if (!f.telefono.trim() && !f.email.trim()) return setError("Dejanos un WhatsApp o un email para responderte.");
++    setEstado("enviando");
++    try {
++      const r = await fetch("/api/consulta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
++      const j = await r.json().catch(() => ({}));
++      if (!r.ok) throw new Error(j.error || "No pudimos enviar la consulta.");
++      setEstado("ok");
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "No pudimos enviar la consulta.");
++      setEstado("");
++    }
++  }
++
++  const campo = "w-full border-0 border-b-2 border-dashed border-black/25 bg-transparent px-0 py-2 text-base outline-none placeholder:text-black/35 focus:border-black";
++
++  if (estado === "ok")
++    return (
++      <div className="bg-white px-7 py-10 text-center">
++        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#16130F] text-white">
++          <Check size={28} />
++        </div>
++        <h3 className="mt-4 text-3xl font-extrabold">¡Recibido!</h3>
++        <p className="mx-auto mt-2 max-w-xs opacity-70">
++          Gracias, {f.nombre.split(" ")[0]}. Te escribimos {f.telefono ? "por WhatsApp" : "por email"} a la brevedad.
++        </p>
++      </div>
++    );
++
++  return (
++    <form onSubmit={enviar} className="bg-white px-6 py-6 text-left sm:px-7">
++      <div className="mono flex justify-between text-xs uppercase tracking-widest opacity-60">
++        <span>Nota de pedido</span>
++        <span>{MARCA.dominio}</span>
++      </div>
++      <h3 className="mt-1 text-3xl font-extrabold">Pedí tu prueba o el precio</h3>
++
++      <div className="mono mt-5 text-[11px] font-bold uppercase tracking-widest opacity-60">Me interesa</div>
++      <div className="mt-2 flex flex-wrap gap-2">
++        {PLANES.map((p) => (
++          <button
++            key={p}
++            type="button"
++            onClick={() => setF((x) => ({ ...x, plan: p }))}
++            className={`rounded-full border-2 border-[#16130F] px-3 py-1 text-sm font-semibold transition ${f.plan === p ? "bg-[#16130F] text-white" : "hover:bg-black/5"}`}
++          >
++            {p}
++          </button>
++        ))}
++      </div>
++
++      <div className="mt-4 grid gap-x-5 sm:grid-cols-2">
++        <input className={campo} placeholder="Tu nombre *" value={f.nombre} onChange={set("nombre")} required maxLength={120} autoComplete="name" />
++        <input className={campo} placeholder="Nombre del negocio" value={f.negocio} onChange={set("negocio")} maxLength={120} autoComplete="organization" />
++        <input className={campo} placeholder="WhatsApp" value={f.telefono} onChange={set("telefono")} maxLength={40} inputMode="tel" autoComplete="tel" />
++        <input className={campo} placeholder="Email" type="email" value={f.email} onChange={set("email")} maxLength={160} autoComplete="email" />
++      </div>
++      <textarea className={`${campo} mt-1 resize-none`} rows={2} placeholder="¿Algo que quieras contarnos? (rubro, cuántas cajas…)" value={f.mensaje} onChange={set("mensaje")} maxLength={2000} />
++      {/* trampa anti-robots: invisible para personas */}
++      <input type="text" name="web" value={f.web} onChange={set("web")} tabIndex={-1} autoComplete="off" aria-hidden className="absolute -left-[9999px] h-0 w-0 opacity-0" />
++
++      {error && <p className="mt-3 rounded bg-[#FF5B1F]/10 px-3 py-2 text-sm font-medium text-[#B83A0E]">{error}</p>}
++
++      <button
++        disabled={estado === "enviando"}
++        className="mt-5 flex w-full items-center justify-between rounded-full bg-[#16130F] py-3 pl-6 pr-3 text-lg font-semibold text-white disabled:opacity-60"
++      >
++        {estado === "enviando" ? "Enviando…" : "Enviar"}
++        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FF5B1F]">
++          <ArrowRight size={18} />
++        </span>
++      </button>
++      <p className="mono mt-2 text-center text-[11px] opacity-50">Te respondemos el mismo día. Sin compromiso.</p>
++
++      {MARCA.whatsapp && (
++        <a
++          href={linkWhatsApp(`Hola! Me interesa Mostrador${f.plan && f.plan !== "No sé todavía" ? ` (${f.plan})` : ""}.`)}
++          target="_blank"
++          rel="noopener"
++          className="mt-4 flex items-center justify-center gap-2 rounded-full border-2 border-[#16130F] py-2.5 font-semibold hover:bg-black/5"
++        >
++          <MessageCircle size={18} /> O escribinos directo por WhatsApp
++        </a>
++      )}
++    </form>
++  );
++}
+diff --git a/src/app/landing/page.tsx b/src/app/landing/page.tsx
+index 9abd7d7..f8efec9 100644
+--- a/src/app/landing/page.tsx
++++ b/src/app/landing/page.tsx
+@@ -1,7 +1,8 @@
+ import type { Metadata } from "next";
+ import localFont from "next/font/local";
+-import { ArrowRight, MessageCircle, Plus } from "lucide-react";
+-import { MARCA, linkWhatsApp } from "@/lib/marca";
++import { ArrowRight, Plus } from "lucide-react";
++import { MARCA } from "@/lib/marca";
++import { FormConsulta } from "./FormConsulta";
+ 
+ // Fuentes guardadas en el proyecto (licencia OFL): Bricolage Grotesque y JetBrains Mono
+ const display = localFont({
+@@ -36,8 +37,8 @@ export const metadata: Metadata = {
+   },
+ };
+ 
+-const WA_PRUEBA = linkWhatsApp("Hola! Quiero probar Mostrador en mi negocio.");
+-const WA_CONSULTA = linkWhatsApp("Hola! Tengo una consulta sobre Mostrador.");
++// Todos los botones llevan al formulario del final (que también ofrece WhatsApp si está configurado)
++const A_PRUEBA = "#probar";
+ 
+ /* Paleta: papel, tinta, naranja, amarillo cenefa */
+ const C = { papel: "#F6F1E7", tinta: "#16130F", naranja: "#FF5B1F", cenefa: "#FFD43B" };
+@@ -150,7 +151,7 @@ export default function Landing() {
+             verdad.
+           </p>
+           <div className="mt-8 flex flex-wrap items-center gap-5">
+-            <a href={WA_PRUEBA} className="group inline-flex items-center gap-3 rounded-full py-3 pl-7 pr-3 text-lg font-semibold text-white" style={{ background: C.tinta }}>
++            <a href={A_PRUEBA} className="group inline-flex items-center gap-3 rounded-full py-3 pl-7 pr-3 text-lg font-semibold text-white" style={{ background: C.tinta }}>
+               Probalo gratis
+               <span className="flex h-9 w-9 items-center justify-center rounded-full transition group-hover:translate-x-1" style={{ background: C.naranja }}>
+                 <ArrowRight size={18} />
+@@ -311,7 +312,7 @@ export default function Landing() {
+                 </ul>
+                 <div className="my-4 border-t-2 border-dashed border-black/20" />
+                 <a
+-                  href={linkWhatsApp(`Hola! Me interesa el plan ${p.n} de Mostrador.`)}
++                  href={p.n === "Básico" ? "#plan-basico" : "#plan-completo"}
+                   className="flex items-center justify-between rounded-full px-5 py-3 font-semibold"
+                   style={p.dest ? { background: C.tinta, color: "#fff" } : { border: `2px solid ${C.tinta}` }}
+                 >
+@@ -340,27 +341,34 @@ export default function Landing() {
+         </div>
+       </section>
+ 
+-      {/* Cierre */}
+-      <section className="px-5 pb-10">
+-        <div className="mx-auto max-w-6xl rounded-[2rem] px-6 py-16 text-center md:py-20" style={{ background: C.naranja, color: C.tinta }}>
+-          <p className="mono text-xs font-bold uppercase tracking-widest">Cartel de la puerta</p>
+-          <h2 className="mt-3 text-6xl font-extrabold tracking-tight md:text-8xl">ABIERTO</h2>
+-          <p className="mx-auto mt-4 max-w-md text-lg">Escribinos y en el día te dejamos la cuenta lista para empezar a vender.</p>
+-          <div className="mt-8 flex flex-wrap justify-center gap-3">
+-            <a href={WA_PRUEBA} className="inline-flex items-center gap-2 rounded-full px-7 py-4 font-semibold text-white" style={{ background: C.tinta }}>
+-              <MessageCircle size={18} /> Escribinos por WhatsApp
+-            </a>
+-            <a href={`${MARCA.urlApp}/login`} className="rounded-full border-2 px-7 py-4 font-semibold" style={{ borderColor: C.tinta }}>
+-              Ya tengo cuenta
++      {/* Cierre + formulario */}
++      <section id="contacto" className="px-5 pb-10">
++        <span id="probar" className="block scroll-mt-6" aria-hidden />
++        <span id="plan-basico" className="block scroll-mt-6" aria-hidden />
++        <span id="plan-completo" className="block scroll-mt-6" aria-hidden />
++        <div className="mx-auto grid max-w-6xl items-center gap-10 rounded-[2rem] px-6 py-14 md:px-12 md:py-16 lg:grid-cols-[1fr_1.1fr]" style={{ background: C.naranja, color: C.tinta }}>
++          <div className="text-center lg:text-left">
++            <p className="mono text-xs font-bold uppercase tracking-widest">Cartel de la puerta</p>
++            <h2 className="mt-3 text-6xl font-extrabold tracking-tight md:text-8xl">ABIERTO</h2>
++            <p className="mx-auto mt-4 max-w-md text-lg lg:mx-0">
++              Dejanos tus datos y en el día te creamos la cuenta para que pruebes Mostrador en tu negocio, o te pasamos el precio del plan que elijas.
++            </p>
++            <a href={`${MARCA.urlApp}/login`} className="mono mt-6 inline-block text-sm font-bold uppercase tracking-widest underline decoration-2 underline-offset-4">
++              Ya tengo cuenta: ingresar
+             </a>
+           </div>
++          <div className="mx-auto w-full max-w-lg drop-shadow-[0_18px_30px_rgba(22,19,15,0.25)]">
++            <Dientes arriba />
++            <FormConsulta />
++            <Dientes />
++          </div>
+         </div>
+       </section>
+ 
+       <footer className="mono mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-8 text-xs uppercase tracking-widest opacity-70">
+         <span>mostrador · {MARCA.dominio}</span>
+         <span className="flex gap-5">
+-          <a href={WA_CONSULTA} className="hover:underline">
++          <a href="#probar" className="hover:underline">
+             Contacto
+           </a>
+           <a href={`${MARCA.urlApp}/login`} className="hover:underline">
+diff --git a/src/components/ConsultasPanel.tsx b/src/components/ConsultasPanel.tsx
+new file mode 100644
+index 0000000..82e14e3
+--- /dev/null
++++ b/src/components/ConsultasPanel.tsx
+@@ -0,0 +1,140 @@
++"use client";
++
++import { useCallback, useEffect, useState } from "react";
++import toast from "react-hot-toast";
++import { Check, Inbox, Mail, MessageCircle, RotateCcw } from "lucide-react";
++import { errMsg, rpc, supabase } from "@/lib/supabase";
++import { fechaHora } from "@/lib/format";
++import { Badge } from "./ui";
++
++export interface Consulta {
++  id: string;
++  creado: string;
++  nombre: string;
++  negocio: string;
++  telefono: string;
++  email: string;
++  plan: string;
++  mensaje: string;
++  atendida: string | null;
++  nota: string;
++}
++
++/** WhatsApp argentino: agrega 549 si escribieron el número local */
++const waNumero = (t: string) => {
++  let d = t.replace(/\D/g, "").replace(/^0/, "");
++  if (d.startsWith("54")) d = d.slice(2);
++  if (d.startsWith("9")) d = d.slice(1);
++  d = d.replace(/^(\d{2,4})15/, "$1"); // 381 15 xxxxxxx → 381 xxxxxxx
++  return `549${d}`;
++};
++
++/** Consultas que llegan desde el formulario de la página de presentación (sólo superadmin) */
++export function ConsultasPanel() {
++  const [lista, setLista] = useState<Consulta[]>([]);
++  const [todas, setTodas] = useState(false);
++
++  const cargar = useCallback(async () => {
++    let q = supabase.from("consultas").select("*").order("creado", { ascending: false }).limit(100);
++    if (!todas) q = q.is("atendida", null);
++    const { data, error } = await q;
++    if (error) {
++      // la tabla todavía no existe (falta correr schema.sql): no molestar
++      if (!/consultas/.test(error.message)) toast.error(errMsg(error));
++      return;
++    }
++    setLista(data as Consulta[]);
++  }, [todas]);
++
++  useEffect(() => {
++    cargar();
++  }, [cargar]);
++
++  async function marcar(c: Consulta, atendida: boolean) {
++    try {
++      await rpc("admin_consulta_atendida", { p_id: c.id, p_atendida: atendida, p_nota: null });
++      cargar();
++    } catch (e) {
++      toast.error(errMsg(e));
++    }
++  }
++
++  const pendientes = lista.filter((c) => !c.atendida).length;
++  if (!todas && lista.length === 0)
++    return (
++      <div className="mb-4 flex items-center justify-between rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-500">
++        <span className="flex items-center gap-2">
++          <Inbox size={16} /> No hay consultas nuevas desde la página.
++        </span>
++        <button className="text-xs text-brand-600 hover:underline" onClick={() => setTodas(true)}>
++          Ver atendidas
++        </button>
++      </div>
++    );
++
++  return (
++    <div className="card mb-4 overflow-x-auto">
++      <div className="flex flex-wrap items-center justify-between gap-2 p-4">
++        <h3 className="flex items-center gap-2 font-semibold">
++          <Inbox size={18} /> Consultas desde la página
++          {pendientes > 0 && <Badge tone="amber">{pendientes} sin atender</Badge>}
++        </h3>
++        <label className="flex items-center gap-1 text-xs text-slate-600">
++          <input type="checkbox" checked={todas} onChange={(e) => setTodas(e.target.checked)} /> Ver también las atendidas
++        </label>
++      </div>
++      <table className="table">
++        <thead>
++          <tr>
++            <th>Fecha</th>
++            <th>Quién</th>
++            <th>Plan</th>
++            <th>Mensaje</th>
++            <th></th>
++          </tr>
++        </thead>
++        <tbody>
++          {lista.map((c) => (
++            <tr key={c.id} className={c.atendida ? "opacity-50" : ""}>
++              <td className="whitespace-nowrap text-xs text-slate-500">{fechaHora(c.creado)}</td>
++              <td>
++                <div className="font-medium">{c.nombre}</div>
++                {c.negocio && <div className="text-xs text-slate-500">{c.negocio}</div>}
++                <div className="mt-1 flex flex-wrap gap-2 text-xs">
++                  {c.telefono && (
++                    <a
++                      className="inline-flex items-center gap-1 text-emerald-700 hover:underline"
++                      href={`https://wa.me/${waNumero(c.telefono)}?text=${encodeURIComponent(`Hola ${c.nombre.split(" ")[0]}! Te escribo de Mostrador por tu consulta.`)}`}
++                      target="_blank"
++                      rel="noopener"
++                    >
++                      <MessageCircle size={13} /> {c.telefono}
++                    </a>
++                  )}
++                  {c.email && (
++                    <a className="inline-flex items-center gap-1 text-brand-600 hover:underline" href={`mailto:${c.email}?subject=${encodeURIComponent("Tu consulta sobre Mostrador")}`}>
++                      <Mail size={13} /> {c.email}
++                    </a>
++                  )}
++                </div>
++              </td>
++              <td>{c.plan && <Badge tone={c.plan === "Completo" ? "green" : c.plan === "Básico" ? "blue" : "slate"}>{c.plan}</Badge>}</td>
++              <td className="max-w-xs whitespace-pre-wrap text-sm text-slate-600">{c.mensaje}</td>
++              <td className="whitespace-nowrap text-right">
++                {c.atendida ? (
++                  <button className="btn-ghost btn-sm" onClick={() => marcar(c, false)} title="Volver a pendiente">
++                    <RotateCcw size={14} />
++                  </button>
++                ) : (
++                  <button className="btn-ghost btn-sm" onClick={() => marcar(c, true)}>
++                    <Check size={14} /> Atendida
++                  </button>
++                )}
++              </td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++    </div>
++  );
++}
+diff --git a/src/lib/marca.ts b/src/lib/marca.ts
+index 8764020..8d1605a 100644
+--- a/src/lib/marca.ts
++++ b/src/lib/marca.ts
+@@ -9,4 +9,4 @@ export const MARCA = {
+ 
+ /** Link de WhatsApp con mensaje armado (si no hay número configurado, lleva a la app) */
+ export const linkWhatsApp = (mensaje: string) =>
+-  MARCA.whatsapp ? `https://wa.me/${MARCA.whatsapp}?text=${encodeURIComponent(mensaje)}` : `${MARCA.urlApp}/login`;
++  MARCA.whatsapp ? `https://wa.me/${MARCA.whatsapp}?text=${encodeURIComponent(mensaje)}` : "#probar";
+diff --git a/supabase/schema.sql b/supabase/schema.sql
+index cff62a2..079adc2 100644
+--- a/supabase/schema.sql
++++ b/supabase/schema.sql
+@@ -264,6 +264,23 @@ create table if not exists pagos_proveedor (
+ );
+ alter table movimientos_caja add column if not exists pago_proveedor_id uuid;
+ 
++-- Consultas que llegan desde la página de presentación (mikiosko.com.ar).
++-- Las inserta sólo el servidor (/api/consulta); las ve y atiende sólo el superadmin.
++create table if not exists consultas (
++  id        uuid primary key default gen_random_uuid(),
++  creado    timestamptz not null default now(),
++  nombre    text not null check (length(nombre) between 1 and 120),
++  negocio   text not null default '' check (length(negocio) <= 120),
++  telefono  text not null default '' check (length(telefono) <= 40),
++  email     text not null default '' check (length(email) <= 160),
++  plan      text not null default '' check (length(plan) <= 40),
++  mensaje   text not null default '' check (length(mensaje) <= 2000),
++  origen    text not null default '',          -- huella de IP (para limitar spam), no la IP
++  atendida  timestamptz,
++  nota      text not null default ''
++);
++create index if not exists consultas_idx on consultas (creado desc);
++
+ -- Mercado Pago (cobro con QR automático): cuenta conectada y cobros generados.
+ -- El access token NO está acá: se guarda cifrado en Vault (mp_guardar_token).
+ create table if not exists mp_cuentas (
+@@ -671,6 +688,15 @@ create trigger proteger_clave_vendedor before update of encrypted_password on au
+ -- PANEL DEL ADMINISTRADOR GENERAL (superadmin)
+ --   Gestiona comercios (plan, vencimiento, suspensión). No ve ventas ni productos de otros.
+ -- ---------------------------------------------------------------------
++create or replace function admin_consulta_atendida(p_id uuid, p_atendida boolean, p_nota text default null) returns void
++language plpgsql security definer set search_path = public as $$
++begin
++  perform _exigir_superadmin();
++  update consultas set atendida = case when p_atendida then coalesce(atendida, now()) end,
++                       nota = coalesce(left(p_nota, 1000), nota)
++   where id = p_id;
++end $$;
++
+ create or replace function admin_comercios() returns table (
+   id uuid, nombre text, plan text, vence date, activo boolean, contacto text, notas text, creado timestamptz,
+   usuarios bigint, dueno text, ventas_30d bigint, total_30d numeric, ultima_venta timestamptz, productos bigint
+@@ -1417,7 +1443,7 @@ declare t text;
+ begin
+   foreach t in array array['comercios','superadmins','invitaciones','perfiles','config','proveedores','productos','cajas',
+                            'ventas','venta_items','movimientos_caja','movimientos_stock','compras','gastos','comprobantes','arca_ta',
+-                           'vencimientos','mp_cuentas','mp_cobros','pagos_proveedor'] loop
++                           'vencimientos','mp_cuentas','mp_cobros','pagos_proveedor','consultas'] loop
+     execute format('alter table %I enable row level security', t);
+   end loop;
+ end $$;
+@@ -1471,6 +1497,7 @@ create policy gastos_sel on gastos for select
+   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('gastos')));
+ create policy gastos_del on gastos for delete
+   using (comercio_id = (select mi_comercio()) and (select es_admin()) and caja_id is null and (select modulo_habilitado('gastos')));
++create policy consultas_sel on consultas for select using ((select es_superadmin()));
+ create policy pagos_proveedor_sel on pagos_proveedor for select
+   using (comercio_id = (select mi_comercio()) and (select es_admin()) and (select modulo_habilitado('compras')));
+ create policy mp_cuentas_sel on mp_cuentas for select using (comercio_id = (select mi_comercio()) and (select es_activo()));
+@@ -1520,10 +1547,10 @@ end $$;
+ 
+ revoke all on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
+   registrar_pago_proveedor, anular_pago_proveedor, registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
+-  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave from public, anon;
++  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_consulta_atendida, admin_invitar, cambiar_clave from public, anon;
+ grant execute on function registrar_venta, anular_venta, crear_producto, eliminar_producto, registrar_vencimiento, resolver_vencimiento, mover_stock, aumentar_precios, actualizar_precios, importar_precios, importar_productos,
+   registrar_pago_proveedor, anular_pago_proveedor, registrar_compra, datos_factura_compra, registrar_gasto, abrir_caja, movimiento_caja, cerrar_caja, invitar_usuario,
+-  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_invitar, cambiar_clave,
++  admin_comercios, admin_crear_comercio, admin_actualizar_comercio, admin_consulta_atendida, admin_invitar, cambiar_clave,
+   es_activo, es_admin, es_superadmin, mi_comercio, modulo_habilitado, licencia_activa to authenticated;
+ grant execute on function sistema_inicializado to anon, authenticated;
+ 
+-- 
+2.43.0
+

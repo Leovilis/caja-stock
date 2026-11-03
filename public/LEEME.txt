@@ -1,0 +1,21 @@
+FAVICON DE MOSTRADOR
+Copiá estas carpetas sobre el proyecto (reemplazá si pregunta):
+
+  src/app/favicon.ico     -> pestaña del navegador (16/32/48 px, versión simplificada para que se lea en chico)
+  src/app/icon.svg        -> ícono nítido en navegadores modernos
+  src/app/apple-icon.png  -> ícono al agregar la app a la pantalla de inicio del iPhone
+  public/icon-192.png     -> ícono de la app instalada (Android / Chrome)
+  public/icon-512.png
+  public/icon.svg
+
+Next.js toma solo los tres de src/app (no hay que tocar layout.tsx).
+En public/manifest.webmanifest reemplazá la línea "icons" por:
+
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+
+Si existe un src/app/favicon.ico viejo, este lo reemplaza. Después: commit, push y Vercel publica solo.
+El navegador guarda el favicon viejo en caché: si no lo ves, Ctrl+F5 o abrí en ventana de incógnito.
