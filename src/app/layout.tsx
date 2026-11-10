@@ -8,6 +8,8 @@ export const metadata: Metadata = {
   title: "Mostrador — caja y stock para tu negocio",
   description: "Caja y stock para tu negocio",
   manifest: "/manifest.webmanifest",
+  // La aplicación (app.mikiosko.com.ar) no se indexa; la página de presentación lo pisa con index: true
+  robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = { themeColor: "#1d4ed8", width: "device-width", initialScale: 1 };

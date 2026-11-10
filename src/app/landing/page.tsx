@@ -23,18 +23,46 @@ const mono = localFont({
   display: "swap",
 });
 
+const TITULO = "Mostrador: sistema de caja y stock para kioscos";
+const DESCRIPCION =
+  "Sistema de caja y stock para kioscos, drugstores y almacenes: vendé con lector, cobrá con QR de Mercado Pago y facturá en ARCA. Probalo gratis.";
+
 export const metadata: Metadata = {
-  title: "Mostrador — Caja y stock para tu negocio",
-  description:
-    "Vendé con lector de códigos, cobrá con QR de Mercado Pago, controlá stock y vencimientos y sabé cuánto ganás de verdad. Desde la compu, la tablet o el celular.",
+  metadataBase: new URL(`https://${MARCA.dominio}`),
+  title: TITULO,
+  description: DESCRIPCION,
+  keywords: [
+    "sistema para kiosco", "programa de caja para kiosco", "punto de venta kiosco", "control de stock",
+    "sistema para almacén", "sistema para drugstore", "cobro con QR Mercado Pago", "factura electrónica ARCA",
+  ],
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
   openGraph: {
-    title: "Mostrador — Caja y stock para tu negocio",
-    description: "El sistema de caja y stock para kioscos, drugstores y almacenes.",
+    title: TITULO,
+    description: "El sistema de caja y stock para kioscos, drugstores y almacenes. Probalo gratis.",
     url: `https://${MARCA.dominio}`,
     siteName: "Mostrador",
     locale: "es_AR",
     type: "website",
+    images: [{ url: "/og-mostrador.png", width: 1200, height: 630, alt: "Mostrador, sistema de caja y stock para kioscos" }],
   },
+  twitter: { card: "summary_large_image", title: TITULO, description: DESCRIPCION, images: ["/og-mostrador.png"] },
+  // Si verificás Search Console con la etiqueta HTML (en vez de DNS), cargá el código en Vercel
+  verification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION ? { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION } : undefined,
+};
+
+// Datos estructurados: le dicen a Google que es un software para comercios, con prueba gratis
+const DATOS_ESTRUCTURADOS = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Mostrador",
+  url: `https://${MARCA.dominio}`,
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Web, Windows, Android, iOS",
+  inLanguage: "es-AR",
+  description: DESCRIPCION,
+  image: `https://${MARCA.dominio}/og-mostrador.png`,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "ARS", description: "Prueba gratis" },
 };
 
 // Todos los botones llevan al formulario del final (que también ofrece WhatsApp si está configurado)
@@ -103,6 +131,7 @@ function CodigoBarras({ className = "" }: { className?: string }) {
 export default function Landing() {
   return (
     <div className={`${display.variable} ${mono.variable} min-h-screen overflow-x-hidden`} style={{ background: C.papel, color: C.tinta, fontFamily: "var(--f-display)" }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(DATOS_ESTRUCTURADOS) }} />
       <style>{`
         @keyframes cinta { from { transform: translateX(0) } to { transform: translateX(-50%) } }
         .cinta { animation: cinta 30s linear infinite }
@@ -132,7 +161,7 @@ export default function Landing() {
       <section className="mx-auto grid max-w-6xl items-center gap-14 px-5 pb-20 pt-6 md:pt-12 lg:grid-cols-[1.25fr_1fr]">
         <div>
           <p className="mono mb-6 inline-block -rotate-1 px-2 py-1 text-xs font-bold uppercase tracking-widest" style={{ background: C.cenefa }}>
-            Caja y stock para tu negocio
+            Sistema de caja y stock para kioscos y almacenes
           </p>
           <h1 className="text-[2.7rem] font-extrabold leading-[0.95] tracking-tight sm:text-6xl lg:text-7xl">
             Todo tu negocio,
