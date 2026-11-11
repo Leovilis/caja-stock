@@ -13,6 +13,8 @@ export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   if (pathname === "/") return NextResponse.rewrite(new URL("/landing", req.url));
   if (pathname.startsWith("/landing")) return NextResponse.next();
+  // guías públicas: mikiosko.com.ar/guias/... (viven en /landing/guias)
+  if (pathname === "/guias" || pathname.startsWith("/guias/")) return NextResponse.rewrite(new URL(`/landing${pathname}${search}`, req.url));
   // cualquier pantalla de la app pedida en el dominio principal (ej: /login) → a app.
   return NextResponse.redirect(`${MARCA.urlApp}${pathname}${search}`, 308);
 }

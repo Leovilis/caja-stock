@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { ArrowRight, Plus } from "lucide-react";
 import { MARCA } from "@/lib/marca";
 import { FormConsulta } from "./FormConsulta";
+import { Analytics } from "./Analytics";
 
 // Fuentes guardadas en el proyecto (licencia OFL): Bricolage Grotesque y JetBrains Mono
 const display = localFont({
@@ -131,6 +132,7 @@ function CodigoBarras({ className = "" }: { className?: string }) {
 export default function Landing() {
   return (
     <div className={`${display.variable} ${mono.variable} min-h-screen overflow-x-hidden`} style={{ background: C.papel, color: C.tinta, fontFamily: "var(--f-display)" }}>
+      <Analytics />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(DATOS_ESTRUCTURADOS) }} />
       <style>{`
         @keyframes cinta { from { transform: translateX(0) } to { transform: translateX(-50%) } }
@@ -151,6 +153,7 @@ export default function Landing() {
           <a href="#dia" className="hover:underline">Un día</a>
           <a href="#planes" className="hover:underline">Planes</a>
           <a href="#preguntas" className="hover:underline">Preguntas</a>
+          <a href="/guias" className="hover:underline">Guías</a>
         </nav>
         <a href={`${MARCA.urlApp}/login`} className="mono rounded-full border-2 px-4 py-1.5 text-xs font-bold uppercase tracking-widest transition hover:bg-black hover:text-white" style={{ borderColor: C.tinta }}>
           Ingresar
@@ -399,6 +402,9 @@ export default function Landing() {
         <span className="flex gap-5">
           <a href="#probar" className="hover:underline">
             Contacto
+          </a>
+          <a href="/guias" className="hover:underline">
+            Guías
           </a>
           <a href={`${MARCA.urlApp}/login`} className="hover:underline">
             Ingresar

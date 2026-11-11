@@ -34,6 +34,8 @@ export function FormConsulta() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "No pudimos enviar la consulta.");
       setEstado("ok");
+      // conversión para Google Analytics (si está activo)
+      (window as unknown as { gtag?: (...a: unknown[]) => void }).gtag?.("event", "generate_lead", { plan: f.plan });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos enviar la consulta.");
       setEstado("");
