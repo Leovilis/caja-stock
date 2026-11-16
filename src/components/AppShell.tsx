@@ -82,7 +82,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // Secciones que no incluye el plan contratado
   const modRuta = moduloDeRuta(path);
-  const fueraDelPlan = !!modRuta && !modulo(modRuta);
+  // sólo cuando ya se cargó el plan del comercio (si no, un F5 en Reportes manda a la caja)
+  const fueraDelPlan = !!licencia.id && !!modRuta && !modulo(modRuta);
   useEffect(() => {
     if (perfil && fueraDelPlan) router.replace("/pos");
   }, [perfil, fueraDelPlan, router]);
