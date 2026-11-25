@@ -12,6 +12,7 @@ import { imprimirTicket } from "@/lib/ticket";
 import { Pago, Producto, Venta, facturacionConfigurada, comisionDe, conRecargo, mediosDe, nombreCorto, medioParaPagoMP, TIPO_PAGO_MP, type MedioConfig, type MpCuenta } from "@/lib/types";
 import { useMpCuenta } from "@/hooks/useMpCuenta";
 import { QrMercadoPago } from "@/components/QrMercadoPago";
+import { BotonCamara, EscanerCamara, variantesCodigo, type Lectura } from "@/components/EscanerCamara";
 import { FacturarModal } from "@/components/FacturarModal";
 
 interface CarritoItem extends ItemCarrito {
@@ -144,7 +145,7 @@ export default function POSPage() {
     const m = raw.match(/^(\d+(?:[.,]\d+)?)\*(.*)$/);
     const cant = m ? Number(m[1].replace(",", ".")) : 1;
     const codigo = (m ? m[2] : raw).trim();
-    const exacto = porCodigo.get(codigo);
+    const exacto = variantesCodigo(codigo).map((c) => porCodigo.get(c)).find(Boolean);
     if (exacto) {
       agregar(exacto, cant);
       setBusqueda("");
@@ -157,6 +158,15 @@ export default function POSPage() {
     }
     toast.error(`No se encontró "${codigo}"`);
     setBusqueda("");
+  }
+
+  // Lectura con la cámara: suma el producto al ticket (queda abierta para escanear varios)
+  const [camara, setCamara] = useState(false);
+  function leidoCamara(codigo: string): Lectura {
+    const p = variantesCodigo(codigo).map((c) => porCodigo.get(c)).find(Boolean);
+    if (!p) return { ok: false, texto: `No hay ningún producto con el código ${codigo}` };
+    agregar(p);
+    return { ok: true, texto: `✓ ${p.nombre} · ${money(p.precio)}` };
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -245,6 +255,7 @@ export default function POSPage() {
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:h-[calc(100vh-2rem)] lg:grid-cols-[minmax(0,1fr)_420px]">
+      <EscanerCamara open={camara} continuo onClose={() => { setCamara(false); foco(); }} onCodigo={leidoCamara} titulo="Escaneá los productos" />
       {/* Izquierda: búsqueda y productos */}
       <section className="flex min-h-0 min-w-0 flex-col gap-3">
         <div className="card flex items-center gap-2 p-2">
@@ -258,6 +269,7 @@ export default function POSPage() {
             placeholder="Escaneá el código o buscá por nombre…  (ej: 6*7790895000997)"
             className="min-w-0 flex-1 bg-transparent px-2 py-3 text-lg outline-none"
           />
+          <BotonCamara onClick={() => setCamara(true)} />
           <button className="btn-ghost" onClick={() => setModalVarios(true)} title="F4">
             <PlusCircle size={16} /> <span className="hidden sm:inline">Varios</span>
           </button>

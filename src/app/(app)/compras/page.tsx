@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { Download, Eye, Plus, Trash2 } from "lucide-react";
+import { BotonCamara, EscanerCamara, variantesCodigo } from "@/components/EscanerCamara";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
@@ -207,6 +208,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [mantenerMargen, setMantenerMargen] = useState(true);
   const [vence, setVence] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [camara, setCamara] = useState(false);
 
   const res = useMemo(() => {
     const t = norm(q.trim());
@@ -314,9 +316,22 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
         )}
       </div>
 
-      <div className="relative mt-4">
+      <div className="relative mt-4 flex gap-2">
+        <EscanerCamara
+          open={camara}
+          continuo
+          onClose={() => setCamara(false)}
+          titulo="Escaneá la mercadería que entró"
+          onCodigo={(c) => {
+            const p = productos.find((x) => variantesCodigo(c).includes(x.codigo));
+            if (!p) return { ok: false, texto: `No hay ningún producto con el código ${c}` };
+            agregar(p);
+            return { ok: true, texto: `✓ ${p.nombre}` };
+          }}
+        />
+        <BotonCamara onClick={() => setCamara(true)} className="order-2 shrink-0" />
         <input
-          className="input"
+          className="input order-1"
           placeholder="Escaneá o buscá productos para agregar…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -328,7 +343,7 @@ function NuevaCompraModal({ open, onClose }: { open: boolean; onClose: () => voi
           }}
         />
         {res.length > 0 && (
-          <div className="card absolute z-10 mt-1 w-full overflow-hidden">
+          <div className="card absolute left-0 top-full z-10 mt-1 w-full overflow-hidden">
             {res.map((p) => (
               <button key={p.id} className="flex w-full justify-between px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => agregar(p)}>
                 <span>{p.nombre}</span>

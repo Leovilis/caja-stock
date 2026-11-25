@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.79.0",
+    "@zxing/browser": "0.2.1",
+    "@zxing/library": "0.23.0",
     "fast-xml-parser": "4.5.0",
     "lucide-react": "0.468.0",
     "next": "14.2.35",

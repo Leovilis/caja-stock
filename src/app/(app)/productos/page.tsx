@@ -3,6 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Download, Edit, Plus, Star, TrendingUp, Upload, PackageMinus, Trash2, Tags } from "lucide-react";
+import { BotonCamara, EscanerCamara } from "@/components/EscanerCamara";
 import { useApp } from "@/context/AppContext";
 import { useQuery } from "@/hooks/useQuery";
 import { supabase } from "@/lib/supabase";
@@ -346,6 +347,7 @@ function ProductoModal({
   const [f, setF] = useState<ProductoInput>(VACIO);
   const [markup, setMarkup] = useState(40);
   const [guardando, setGuardando] = useState(false);
+  const [camara, setCamara] = useState(false);
   const esNuevo = producto === "nuevo";
 
   useEffect(() => {
@@ -405,10 +407,22 @@ function ProductoModal({
               placeholder="Escanealo acá"
               onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
             />
+            <BotonCamara className="btn-sm" onClick={() => setCamara(true)} />
             <button type="button" className="btn-ghost btn-sm whitespace-nowrap" onClick={() => set("codigo", "INT" + Date.now().toString().slice(-7))}>
               Generar
             </button>
           </div>
+          <EscanerCamara
+            open={camara}
+            onClose={() => setCamara(false)}
+            titulo="Escaneá el código del producto"
+            onCodigo={(c) => {
+              const otro = productos.find((p) => p.codigo === c && (esNuevo || p.id !== (producto as Producto | null)?.id));
+              if (otro) return { ok: false, texto: `Ese código ya es de "${otro.nombre}"` };
+              set("codigo", c);
+              return { ok: true, texto: `✓ Código ${c}` };
+            }}
+          />
         </Field>
         <Field label="Marca">
           <input className="input" value={f.marca} onChange={(e) => set("marca", e.target.value)} />
